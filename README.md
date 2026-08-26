@@ -44,7 +44,7 @@ flowchart TD
 
             subgraph Storage_Backend ["Persistent Backend Services"]
                 RDS[("Amazon Aurora Serverless v2 PostgreSQL v16.1\n(Issues, Workflows, Users, Settings)\n[Security Group: Port 5432 from VPC]")]
-                EFS[("AWS EFS Network File System\nShared Home: ReadWriteMany (RWX)\n(Attachments, Plugins, Avatars, Cluster Locks)")]
+                EFS[("Amazon EFS Shared File System\n(1x Regional EFS + 3x Mount Targets in Private Subnets)\nShared Home: ReadWriteMany (RWX)\n(Attachments, Plugins, Avatars, Cluster Locks)")]
             end
         end
     end
@@ -95,6 +95,14 @@ Jira Data Center strictly separates local instance data from cluster-shared data
 | **Local Home** | `/var/atlassian/application-data/jira` | **AWS EBS (gp3)** | `ReadWriteOnce` (RWO) | Node-specific Lucene search index, caches, JVM process logs. Fast block I/O. |
 | **Shared Home** | `/var/atlassian/application-data/jira/shared` | **AWS EFS** | `ReadWriteMany` (RWX) | Shared files: attachments, avatars, installed plugins, and cluster lock files. |
 
+#### Shared File System: Amazon EFS (`efs/` module) — Configured
+* **Configuration**: 
+  * `aws_efs_file_system`: Created once as a regional, serverless storage volume.
+  * `aws_efs_mount_target`: Created 3 times (`count = 3`), placing one mount target ENI in each private subnet across all 3 Availability Zones (`us-east-1a`, `us-east-1b`, `us-east-1c`).
+* **Why one mount target per AZ?**:
+  * AWS enforces at most one mount target per AZ.
+  * Worker nodes mount EFS locally in their own AZ over NFS (port 2049), ensuring ultra-low latency and avoiding cross-AZ data transfer costs.
+
 #### What are CSI Drivers?
 Kubernetes pods cannot natively provision AWS disks without CSI (Container Storage Interface) "drivers":
 * **AWS EBS CSI Driver**: Automatically provisions and attaches EBS volumes when Jira requests local storage.
@@ -132,8 +140,9 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 | **EKS Control Plane** | AWS EKS Cluster v1.31 | ✅ Ready | - |
 | **Node Group Sizing** | 2x `m5.xlarge` (16 GB RAM, 50 GB disk) | ✅ Ready | - |
 | **EKS OIDC Provider** | IAM OIDC provider for IRSA (`oidc/` module) | ✅ Ready | - |
+| **AWS EFS File System** | 1x EFS + 3x Mount Targets in private subnets (`efs/`) | ✅ Ready | - |
 | **EBS CSI Driver** | Dynamic volume provisioning for `jira-local-home` | ⏳ Pending | Add `aws-ebs-csi-driver` EKS add-on + IAM role |
-| **AWS EFS + EFS CSI** | Shared storage for `jira-shared-home` | ⏳ Pending | Create EFS file system + install EFS CSI driver |
+| **EFS CSI Driver** | Kubernetes driver to mount EFS for `jira-shared-home` | ⏳ Pending | Install EFS CSI driver add-on + IAM role |
 | **Ingress & ALB** | Expose web UI with cookie sticky sessions | ⏳ Pending | Deploy AWS Load Balancer Controller |
 
 ---
@@ -171,7 +180,11 @@ jira-dc-eks-rds-setup/
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
-└── oidc/                   # IAM OIDC Provider module for IRSA
+├── oidc/                   # IAM OIDC Provider module for IRSA
+│   ├── main.tf
+│   ├── variables.tf
+│   └── output.tf
+└── efs/                    # Amazon EFS shared storage module (1x EFS + 3x Mount Targets)
     ├── main.tf
     ├── variables.tf
     └── output.tf
