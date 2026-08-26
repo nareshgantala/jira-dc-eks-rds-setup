@@ -16,7 +16,9 @@ resource "aws_subnet" "public_subnet" {
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name = "${var.project}-${var.env}-public-subnet-${count.index + 1}"
+    Name                                                          = "${var.project}-${var.env}-public-subnet-${count.index + 1}",
+    "kubernetes.io/role/elb"                                      = "1",
+    "kubernetes.io/cluster/${var.project}-${var.env}-eks-cluster" = "shared"
   }
 }
 
@@ -28,7 +30,9 @@ resource "aws_subnet" "private_subnet" {
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name = "${var.project}-${var.env}-private-subnet-${count.index + 1}"
+    Name                                                          = "${var.project}-${var.env}-private-subnet-${count.index + 1}",
+    "kubernetes.io/role/internal-elb"                             = "1",
+    "kubernetes.io/cluster/${var.project}-${var.env}-eks-cluster" = "shared"
   }
 }
 

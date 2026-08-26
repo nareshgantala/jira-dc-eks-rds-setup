@@ -54,4 +54,44 @@ module "efs" {
   private_subnet_ids = module.vpc.private_subnet_ids
 }
 
+# 1. IAM Role with OIDC Trust Policy
+resource "aws_iam_role" "ebs_csi_role" {
+  name = "${var.project}-${var.env}-ebs-csi-role"
 
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Effect = "Allow"
+        Principal = {
+          Federated = module.oidc.oidc_provider_arn
+        }
+        Condition = {
+          StringEquals = {
+            "${module.oidc.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+            "${module.oidc.oidc_provider_url}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+# 2. Attach AWS Managed Policy for EBS CSI Driver
+resource "aws_iam_role_policy_attachment" "ebs_csi_policy_attach" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi_role.name
+}
+
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name             = "${var.project}-${var.env}-eks-cluster"
+  addon_name               = "aws-ebs-csi-driver"
+  service_account_role_arn = aws_iam_role.ebs_csi_role.arn
+
+  # Ensures the node group is ready before installing the driver pods
+  depends_on = [
+    module.eks,
+    aws_iam_role_policy_attachment.ebs_csi_policy_attach
+  ]
+}

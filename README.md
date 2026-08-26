@@ -133,7 +133,7 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 
 | Requirement | Description | Status | Next Steps |
 | :---: | :--- | :---: | :--- |
-| **VPC & Networking** | 3 Public Subnets, 3 Private Subnets, IGW, NAT GW | ✅ Ready | Add ALB discovery tags |
+| **VPC & Networking** | 3 Public Subnets, 3 Private Subnets, IGW, NAT GW + ALB Tags | ✅ Ready | - |
 | **DB Subnet Group** | DB Subnet Group across private subnets | ✅ Ready | - |
 | **Database Security** | Security group allowing TCP 5432 from VPC | ✅ Ready | - |
 | **Aurora PostgreSQL** | Aurora Serverless v2 PostgreSQL v16.1 cluster | ✅ Ready | - |
@@ -141,9 +141,11 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 | **Node Group Sizing** | 2x `m5.xlarge` (16 GB RAM, 50 GB disk) | ✅ Ready | - |
 | **EKS OIDC Provider** | IAM OIDC provider for IRSA (`oidc/` module) | ✅ Ready | - |
 | **AWS EFS File System** | 1x EFS + 3x Mount Targets in private subnets (`efs/`) | ✅ Ready | - |
-| **EBS CSI Driver** | Dynamic volume provisioning for `jira-local-home` | ⏳ Pending | Add `aws-ebs-csi-driver` EKS add-on + IAM role |
+| **EBS CSI Driver** | EKS Add-on + IRSA IAM Role for `jira-local-home` | ✅ Ready | - |
 | **EFS CSI Driver** | Kubernetes driver to mount EFS for `jira-shared-home` | ⏳ Pending | Install EFS CSI driver add-on + IAM role |
 | **Ingress & ALB** | Expose web UI with cookie sticky sessions | ⏳ Pending | Deploy AWS Load Balancer Controller |
+
+> 📖 **Deep Dive Documentation**: For an in-depth explanation of how EKS IAM (OIDC/IRSA), ServiceAccounts, EBS CSI, and EFS Mount Targets work under the hood, see [EKS_STORAGE_AND_IAM_DEEP_DIVE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/EKS_STORAGE_AND_IAM_DEEP_DIVE.md).
 
 ---
 
