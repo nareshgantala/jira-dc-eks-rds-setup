@@ -8,7 +8,7 @@ variable "env" {
 
 variable "kubernetes_version" {
   type    = string
-  default = 1.35
+  default = "1.31"
 }
 
 variable "subnet_ids" {
@@ -17,6 +17,12 @@ variable "subnet_ids" {
 }
 
 variable "eks_role_arn" {
+  type    = string
+  default = ""
+}
+
+
+variable "node_group_role_arn" {
   type    = string
   default = ""
 }
