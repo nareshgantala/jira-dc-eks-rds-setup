@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Terraform Revision Flashcards: Providers & Backend Setup</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      line-height: 1.6;
+      color: #24292e;
+      max-width: 850px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+    h1 {
+      color: #0b57d0;
+      border-bottom: 2px solid #e1e4e8;
+      padding-bottom: 10px;
+    }
+    .instructions {
+      background: #f1f7fe;
+      border-left: 4px solid #0b57d0;
+      padding: 12px 16px;
+      margin-bottom: 30px;
+      border-radius: 0 8px 8px 0;
+      font-size: 14px;
+    }
+    .card {
+      border: 1px solid #d0d7de;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .card-front {
+      background-color: #f6f8fa;
+      padding: 14px 18px;
+      font-weight: bold;
+      border-bottom: 1px solid #d0d7de;
+      color: #0969da;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge {
+      background: #0969da;
+      color: white;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      text-transform: uppercase;
+    }
+    .card-back {
+      padding: 16px 18px;
+      background: #ffffff;
+    }
+    code {
+      background-color: #eff1f3;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 13.5px;
+      color: #b31d28;
+    }
+    pre {
+      background-color: #f6f8fa;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 13px;
+      border: 1px solid #e1e4e8;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>📚 Terraform Flashcards: Providers & Backend</h1>
+
+  <div class="instructions">
+    <strong>💡 Tip:</strong> You can select everything on this page (<code>Ctrl+A</code>) and copy-paste (<code>Ctrl+C</code> → <code>Ctrl+V</code>) directly into a <strong>Google Doc</strong> to preserve all styles, tables, and colors.
+  </div>
+
+  <!-- Card 1 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 1</span>
+      <span>What is the difference between the <code>required_providers</code> block and the <code>provider "aws"</code> block?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong><code>required_providers</code> (Declaration):</strong> Specifies <em>which plugin binary to download</em> from the registry, its source (<code>hashicorp/aws</code>), and version constraints (<code>~> 6.0</code>).</li>
+        <li><strong><code>provider "aws"</code> (Runtime Configuration):</strong> Configures <em>how the downloaded plugin interacts with the AWS API</em> (e.g. target <code>region = "us-east-1"</code>, credentials, assume roles, default tags).</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 2 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 2</span>
+      <span>What does <code>source = "hashicorp/aws"</code> mean and what is its standard address format?</span>
+    </div>
+    <div class="card-back">
+      <p>It tells Terraform where to download the provider plugin from in the registry.</p>
+      <ul>
+        <li><strong>Format:</strong> <code>[&lt;HOSTNAME&gt;/]&lt;NAMESPACE&gt;/&lt;TYPE&gt;</code></li>
+        <li><strong>Hostname:</strong> Defaults to <code>registry.terraform.io</code> if omitted.</li>
+        <li><strong>Namespace:</strong> <code>hashicorp</code> (the organization).</li>
+        <li><strong>Type:</strong> <code>aws</code> (the provider name).</li>
+        <li><strong>Full Address:</strong> <code>registry.terraform.io/hashicorp/aws</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 3 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 3</span>
+      <span>What does the pessimistic version constraint <code>~> 6.0</code> mean vs <code>~> 6.0.0</code>?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong><code>~> 6.0</code></strong> allows minor & patch updates: <code>>= 6.0.0, &lt; 7.0.0</code> (allows <code>6.1.0</code>, blocks breaking major changes in <code>7.0.0</code>).</li>
+        <li><strong><code>~> 6.0.0</code></strong> allows patch updates only: <code>>= 6.0.0, &lt; 6.1.0</code> (allows <code>6.0.1</code>, blocks <code>6.1.0</code>).</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 4 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 4</span>
+      <span>Can <code>backend "s3"</code> be nested inside <code>required_providers</code>? Where should it live?</span>
+    </div>
+    <div class="card-back">
+      <p><strong>No.</strong> Nesting <code>backend</code> inside <code>required_providers</code> causes a syntax error.</p>
+      <ul>
+        <li><code>required_providers</code> and <code>backend</code> must be <strong>sibling blocks</strong> inside the root <code>terraform { ... }</code> block.</li>
+        <li>Only <strong>one</strong> backend block is permitted per root module configuration.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 5 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 5</span>
+      <span>How does state locking work for S3 backend? Is <code>enable_locking = true</code> valid?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong><code>enable_locking</code> is invalid syntax</strong> and not supported by the S3 backend.</li>
+        <li><strong>Terraform 1.10+:</strong> Supports native S3 state locking via <code>use_lockfile = true</code> (no DynamoDB table required).</li>
+        <li><strong>Terraform &lt; 1.10 / Classic:</strong> Requires an Amazon DynamoDB table configured with <code>dynamodb_table = "&lt;table-name&gt;"</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 6 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 6</span>
+      <span>Why can't you use variables (e.g. <code>var.environment</code>) inside a <code>backend "s3"</code> block?</span>
+    </div>
+    <div class="card-back">
+      <p>Terraform initializes the backend during the <strong>very first phase</strong> of execution, <em>before</em> variables, locals, or resource configs are parsed and loaded.</p>
+      <p>Because variables do not exist yet when the backend initializes, values must be passed statically or via <strong>Partial Backend Configuration</strong>.</p>
+    </div>
+  </div>
+
+  <!-- Card 7 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 7</span>
+      <span>What is "Partial Backend Configuration" and why is it used?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Definition:</strong> Defining an empty backend block in code (<code>backend "s3" {}</code>) and supplying environment-specific values (<code>bucket</code>, <code>key</code>, <code>region</code>) at runtime via an external <code>.tfvars</code> file.</li>
+        <li><strong>Benefit:</strong> Keeps the codebase <strong>DRY and environment-agnostic</strong>, allowing one set of Terraform files to deploy across <code>dev</code>, <code>qa</code>, and <code>prod</code> without duplicate code.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 8 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 8</span>
+      <span>What CLI commands are used to initialize and switch environments with partial backend config?</span>
+    </div>
+    <div class="card-back">
+      <p><strong>1. Initialize Dev:</strong></p>
+      <pre>terraform init -backend-config="env/dev/backend.tfvars"</pre>
+      <p><strong>2. Switch to Prod:</strong></p>
+      <pre>terraform init -backend-config="env/prod/backend.tfvars" -reconfigure</pre>
+      <p><em>(The <code>-reconfigure</code> flag tells Terraform to discard the cached backend connection and point cleanly to the new state file).</em></p>
+    </div>
+  </div>
+
+</body>
+</html>
