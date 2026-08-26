@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Amazon EKS Revision Flashcards: Architecture, Security & IAM</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      line-height: 1.6;
+      color: #24292e;
+      max-width: 850px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+    h1 {
+      color: #0b57d0;
+      border-bottom: 2px solid #e1e4e8;
+      padding-bottom: 10px;
+    }
+    .instructions {
+      background: #f1f7fe;
+      border-left: 4px solid #0b57d0;
+      padding: 12px 16px;
+      margin-bottom: 30px;
+      border-radius: 0 8px 8px 0;
+      font-size: 14px;
+    }
+    .card {
+      border: 1px solid #d0d7de;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .card-front {
+      background-color: #f6f8fa;
+      padding: 14px 18px;
+      font-weight: bold;
+      border-bottom: 1px solid #d0d7de;
+      color: #0969da;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge {
+      background: #0969da;
+      color: white;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      text-transform: uppercase;
+    }
+    .card-back {
+      padding: 16px 18px;
+      background: #ffffff;
+    }
+    code {
+      background-color: #eff1f3;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: Consolas, monospace;
+      font-size: 90%;
+      color: #b31d28;
+    }
+    pre {
+      background-color: #f6f8fa;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      border: 1px solid #e1e4e8;
+    }
+    ul, ol {
+      margin: 8px 0;
+      padding-left: 24px;
+    }
+    li {
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>☸️ Amazon EKS Revision Flashcards</h1>
+
+  <div class="instructions">
+    <strong>Format:</strong> Front (Question / Scenario) ⇄ Back (Answer / Solution)<br>
+    <strong>How to use:</strong> Review questions to test your architectural and interview readiness. You can print to PDF or copy directly into Google Docs / Notion.
+  </div>
+
+  <!-- Card 1 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 1</span>
+      <span>What is the fundamental difference between EKS Cluster Role and Node Group Role?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>EKS Cluster Role (Control Plane):</strong>
+          <ul>
+            <li><strong>Assumed by:</strong> AWS EKS managed service (<code>eks.amazonaws.com</code>).</li>
+            <li><strong>Purpose:</strong> Grants Kubernetes control plane components (API server, controller manager) permissions to manage AWS resources (e.g. cross-account ENIs, load balancers, security groups).</li>
+          </ul>
+        </li>
+        <li><strong>EKS Node Group Role (Worker Nodes):</strong>
+          <ul>
+            <li><strong>Assumed by:</strong> EC2 Worker instances (<code>ec2.amazonaws.com</code>).</li>
+            <li><strong>Purpose:</strong> Allows the node <code>kubelet</code> to join the cluster, enables VPC CNI to manage secondary pod IPs, and allows pulling images from Amazon ECR.</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 2 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 2</span>
+      <span>Which AWS managed policy is strictly required for the EKS Cluster Role?</span>
+    </div>
+    <div class="card-back">
+      <p><strong><code>AmazonEKSClusterPolicy</code></strong></p>
+      <p>Provides Kubernetes with permissions to manage networking components required for cluster operation, such as ENIs attached to your subnets for control plane-to-worker communication and security group interactions.</p>
+    </div>
+  </div>
+
+  <!-- Card 3 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 3</span>
+      <span>What are the 3 mandatory AWS managed policies for EKS Worker Nodes?</span>
+    </div>
+    <div class="card-back">
+      <ol>
+        <li><strong><code>AmazonEKSWorkerNodePolicy</code>:</strong> Allows worker node <code>kubelet</code> to communicate with the EKS control plane API server.</li>
+        <li><strong><code>AmazonEKS_CNI_Policy</code>:</strong> Grants the AWS VPC CNI plugin (<code>aws-node</code>) permissions to allocate and attach secondary ENIs/IPs on the node for Pods.</li>
+        <li><strong><code>AmazonEC2ContainerRegistryReadOnly</code>:</strong> Allows worker nodes to pull container images from Amazon ECR.</li>
+      </ol>
+      <p><em>(Optional Bonus: <code>AmazonSSMManagedInstanceCore</code> allows accessing nodes via AWS Systems Manager Session Manager without needing SSH keys).</em></p>
+    </div>
+  </div>
+
+  <!-- Card 4 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 4</span>
+      <span>Why must <code>aws_eks_cluster</code> and <code>aws_eks_node_group</code> declare <code>depends_on</code> for IAM policy attachments?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>The Problem:</strong> IAM role creation and policy attachments are separate asynchronous AWS API operations. IAM changes take seconds to propagate globally.</li>
+        <li><strong>The Failure:</strong> Without explicit <code>depends_on</code>, Terraform begins provisioning the EKS cluster or node group before AWS IAM policies are active, triggering <code>ResourceInitializationError</code> or authorization failures.</li>
+        <li><strong>Fix:</strong>
+          <pre>resource "aws_eks_cluster" "main" {
+  ...
+  depends_on = [
+    aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy
+  ]
+}</pre>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 5 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 5</span>
+      <span>What are the subnet and AZ requirements for Amazon EKS?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Multi-AZ:</strong> EKS requires subnets in at least <strong>two different Availability Zones</strong> (3 AZs recommended for production high availability).</li>
+        <li><strong>Subnet Sizing:</strong> Minimum <code>/28</code> (16 IPs), but <strong><code>/24</code> (256 IPs) is strongly recommended</strong> because AWS VPC CNI allocates a real VPC IP address to every individual Pod.</li>
+        <li><strong>Control Plane ENIs:</strong> EKS automatically places redundant cross-account ENIs across the specified subnets in your VPC.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 6 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 6</span>
+      <span>Why is attaching application policies to the Node Group IAM Role an anti-pattern? What is the alternative?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Anti-pattern Risk:</strong> Any policy attached to the Node Group IAM role is shared across <strong>all Pods</strong> running on that node, violating least privilege.</li>
+        <li><strong>The Modern Solution:</strong> Use <strong>IRSA (IAM Roles for Service Accounts)</strong> or <strong>EKS Pod Identity</strong>:
+          <ul>
+            <li>Enables an OpenID Connect (OIDC) provider on EKS.</li>
+            <li>Maps an IAM role directly to a specific Kubernetes <code>ServiceAccount</code>.</li>
+            <li>Only authorized Pods (e.g. Jira Pods needing EFS/S3) receive credentials.</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 7 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 7</span>
+      <span>What storage architecture is required for Jira Data Center on EKS?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong><code>jira-local-home</code> (Per Pod):</strong>
+          <ul>
+            <li><strong>Storage:</strong> Fast block storage via <strong>Amazon EBS</strong> (<code>gp3</code>) with <code>ReadWriteOnce</code> (RWO).</li>
+            <li><strong>Content:</strong> Search indexes (Lucene), caches, and local runtime logs.</li>
+          </ul>
+        </li>
+        <li><strong><code>jira-shared-home</code> (Shared Across Cluster):</strong>
+          <ul>
+            <li><strong>Storage:</strong> Shared network filesystem via <strong>Amazon EFS</strong> with <code>ReadWriteMany</code> (RWX) using the AWS EFS CSI Driver.</li>
+            <li><strong>Content:</strong> Attachments, avatars, plugins, and cluster locks accessible concurrently by all Jira nodes.</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 8 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 8</span>
+      <span>How does EKS Access Entries replace the legacy <code>aws-auth</code> ConfigMap?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Legacy (<code>aws-auth</code> ConfigMap):</strong> Required modifying a ConfigMap in Kubernetes <code>kube-system</code> to map IAM ARNs to RBAC. It was difficult to manage with Terraform and prone to syntax lockouts.</li>
+        <li><strong>Modern (EKS Access Entries):</strong> Standardized AWS API resources (<code>aws_eks_access_entry</code> and <code>aws_eks_access_policy_association</code>) that allow managing cluster access directly in Terraform without interacting with Kubernetes internal ConfigMaps.</li>
+      </ul>
+    </div>
+  </div>
+
+</body>
+</html>

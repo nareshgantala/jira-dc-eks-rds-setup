@@ -205,5 +205,131 @@
     </div>
   </div>
 
+  <!-- Card 9 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 9</span>
+      <span>Why did <code>terraform plan</code> prompt for variables despite <code>env/dev/terraform.tfvars</code> existing? How do you fix it?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Root Cause:</strong> Terraform only automatically loads <code>terraform.tfvars</code> or <code>*.auto.tfvars</code> located <strong>directly in the root directory</strong>. Subfolder files are ignored.</li>
+        <li><strong>Solution:</strong> Explicitly specify the file using <code>-var-file</code>:
+          <pre>terraform plan -var-file="env/dev/terraform.tfvars"</pre>
+        </li>
+        <li><strong>Best Practice (Plan Output):</strong> Save plan to file to guarantee identical execution during apply:
+          <pre>terraform plan -var-file="env/dev/terraform.tfvars" -out="dev.tfplan"
+terraform apply "dev.tfplan"</pre>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 10 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 10</span>
+      <span>How does <code>cidrsubnet(var.vpc_cidr, 8, count.index)</code> calculate subnets and why does it affect the 3rd octet?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Syntax:</strong> <code>cidrsubnet(prefix, newbits, netnum)</code>. Base is <code>10.0.0.0/16</code>. Adding <code>8</code> bits makes a <code>/24</code> subnet mask.</li>
+        <li><strong>Why 3rd octet:</strong> An IPv4 address has 4 octets (8 bits each): <code>[1].[2].[3].[4]</code>. The base <code>/16</code> locks octets 1 & 2 (<code>10.0</code>). Adding 8 bits uses the entire <strong>3rd octet</strong> for numbering subnets:
+          <ul>
+            <li><code>netnum = 0</code> ➔ <code>10.0.0.0/24</code></li>
+            <li><code>netnum = 1</code> ➔ <code>10.0.1.0/24</code></li>
+            <li><code>netnum = 2</code> ➔ <code>10.0.2.0/24</code></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 11 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 11</span>
+      <span>Should public subnet CIDRs be defined in <code>aws_route_table</code> routes? How do subnets connect to route tables?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>NO!</strong> In a route table, <code>cidr_block</code> is the <strong>destination</strong> where traffic is going (e.g. <code>0.0.0.0/0</code> pointing to Internet Gateway).</li>
+        <li>VPC internal routing (<code>10.0.0.0/16 ➔ local</code>) is created <strong>automatically by AWS</strong>. Pointing your own subnets to the IGW breaks internal traffic.</li>
+        <li><strong>Connecting Subnets:</strong> Subnets are attached using a separate resource: <code>aws_route_table_association</code> with <code>subnet_id</code> and <code>route_table_id</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 12 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 12</span>
+      <span>How do you keep resource names and tags DRY instead of repeating <code>${var.project}-${var.env}</code>?</span>
+    </div>
+    <div class="card-back">
+      <p>Use a <code>locals</code> block:</p>
+      <pre>locals {
+  name_prefix = "${var.project}-${var.env}"
+  common_tags = {
+    Project     = var.project
+    Environment = var.env
+    ManagedBy   = "terraform"
+  }
+}</pre>
+      <p>Reference it simply across all resources as <code>"${local.name_prefix}-vpc"</code>, <code>"${local.name_prefix}-public-rt"</code>, etc.</p>
+    </div>
+  </div>
+
+  <!-- Card 13 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 13</span>
+      <span>Where must an AWS NAT Gateway be placed, and what dependencies does it have?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Placement:</strong> Must reside in a <strong>Public Subnet</strong> (a subnet with a direct route to an Internet Gateway).</li>
+        <li><strong>Elastic IP:</strong> Requires an EIP with <code>domain = "vpc"</code>.</li>
+        <li><strong>Dependency:</strong> Needs <code>depends_on = [aws_internet_gateway.main]</code> to prevent race conditions during creation.</li>
+        <li><strong>Private Subnet Route:</strong> Private route tables direct <code>0.0.0.0/0</code> to <code>nat_gateway_id = aws_nat_gateway.main.id</code>, providing outbound-only internet for private workloads.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 14 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 14</span>
+      <span>Which two VPC attributes are mandatory for Amazon EKS and why?</span>
+    </div>
+    <div class="card-back">
+      <pre>resource "aws_vpc" "main" {
+  cidr_block           = var.vpc_cidr
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+}</pre>
+      <ul>
+        <li><strong>Default in AWS:</strong> <code>enable_dns_hostnames</code> defaults to <code>false</code> in custom VPCs.</li>
+        <li><strong>Impact:</strong> Without DNS hostnames enabled, EKS worker node <code>kubelet</code> and AWS VPC CNI cannot resolve the cluster control plane API endpoints, preventing worker nodes from joining the cluster.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 15 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 15</span>
+      <span>What subnet tags are required for the AWS Load Balancer Controller in EKS?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>Public Subnets:</strong> <code>kubernetes.io/role/elb = "1"</code> (allows controller to provision internet-facing ALBs/NLBs).</li>
+        <li><strong>Private Subnets:</strong> <code>kubernetes.io/role/internal-elb = "1"</code> (allows controller to provision internal ALBs/NLBs).</li>
+        <li><strong>Failure Scenario:</strong> If missing, the controller errors with <code>failed to resolve subnets: could not find any subnets for load balancer</code> when deploying Ingress or Service resources.</li>
+      </ul>
+    </div>
+  </div>
+
 </body>
 </html>
+
