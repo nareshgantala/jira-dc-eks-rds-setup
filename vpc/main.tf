@@ -99,3 +99,13 @@ resource "aws_route_table_association" "private-subnet-association" {
   subnet_id      = aws_subnet.private_subnet[count.index].id
   route_table_id = aws_route_table.private_route_table.id
 }
+
+
+resource "aws_db_subnet_group" "jira_dc_db_subnet_group" {
+  name       = "jira-dc-db-subnet-group"
+  subnet_ids = [aws_subnet.private_subnet[0].id, aws_subnet.private_subnet[1].id, aws_subnet.private_subnet[2].id]
+
+  tags = {
+    Name = "jira-dc-db-subnet-group"
+  }
+}

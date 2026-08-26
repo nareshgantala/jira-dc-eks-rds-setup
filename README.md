@@ -1,6 +1,6 @@
 # Jira Data Center on AWS EKS & RDS Setup
 
-Production-ready infrastructure architecture for deploying **Atlassian Jira Data Center** on **Amazon Elastic Kubernetes Service (EKS)** with **Amazon RDS PostgreSQL** and **Amazon EFS**.
+Production-ready infrastructure architecture for deploying **Atlassian Jira Data Center** on **Amazon Elastic Kubernetes Service (EKS)** with **Amazon Aurora Serverless v2 PostgreSQL** and **Amazon EFS**.
 
 ---
 
@@ -27,7 +27,7 @@ flowchart TD
             subgraph EKS_Cluster ["Amazon EKS Cluster (Control Plane v1.31)"]
                 OIDC["IAM OIDC Identity Provider (IRSA)"]
 
-                subgraph EKS_Nodes ["EKS Managed Node Group (m5.xlarge - 4 vCPU, 16 GB RAM)"]
+                subgraph EKS_Nodes ["EKS Managed Node Group (2x m5.xlarge - 4 vCPU, 16 GB RAM, 50 GB Disk)"]
                     subgraph Pod1 ["Jira DC Pod 1"]
                         JiraCore1["Jira Application Core\n(JVM Heap: 4-8 GB)"]
                         EBS1[("Local Home (EBS gp3)\nReadWriteOnce (RWO)\nCaches, Search Index, Logs")]
@@ -43,7 +43,7 @@ flowchart TD
             end
 
             subgraph Storage_Backend ["Persistent Backend Services"]
-                RDS[("AWS RDS PostgreSQL\n(Issues, Workflows, Users, Settings)")]
+                RDS[("Amazon Aurora Serverless v2 PostgreSQL v16.1\n(Issues, Workflows, Users, Settings)\n[Security Group: Port 5432 from VPC]")]
                 EFS[("AWS EFS Network File System\nShared Home: ReadWriteMany (RWX)\n(Attachments, Plugins, Avatars, Cluster Locks)")]
             end
         end
@@ -69,22 +69,25 @@ flowchart TD
 
 ## 2. Core Components Deep Dive
 
-### 1. Worker Node Sizing (`m5.xlarge` vs `t3.medium`)
-* **What it does**: Provides the compute virtual machines (EC2) where Jira container pods run.
+### 1. Worker Node Group (`m5.xlarge`) — Configured
+* **Configuration**: `instance_types = ["m5.xlarge"]`, `disk_size = 50 GB`, `desired_size = 2` (min: 1, max: 3).
 * **Why it matters**:
-  * AWS EKS defaults to `t3.medium` (2 vCPUs, 4 GB RAM) if unspecified.
-  * Jira Data Center runs on a Java Virtual Machine (JVM). Atlassian specifies a minimum **4 GB to 8+ GB of RAM (Heap)** just for Jira, plus system reserves for Kubernetes (`kubelet`, `kube-proxy`, `aws-node`, `coredns`).
-  * On `t3.medium`, pods will fail with **`Insufficient memory`** or crash with **`OOMKilled`** (Out of Memory, Exit code 137).
-  * **Production Standard**: At least **`m5.xlarge`** (4 vCPU, 16 GiB RAM) or **`m5.2xlarge`** (8 vCPU, 32 GiB RAM).
+  * AWS EKS defaults to `t3.medium` (2 vCPUs, 4 GB RAM) if unspecified, which causes immediate pod crashes (**`OOMKilled`**) because Jira DC requires **4 GB to 8+ GB of RAM (Heap)** just for the JVM, plus system reserves for Kubernetes daemons (`kubelet`, `aws-node`, `coredns`).
+  * `m5.xlarge` provides **4 vCPUs and 16 GiB RAM**, offering ample capacity for Jira's Lucene indexing, caches, and multiple cluster nodes.
 
-### 2. Database: AWS RDS (PostgreSQL)
-* **What it does**: Central relational database holding all Jira structured data (tickets, workflows, users, permissions, comments).
+### 2. Database: Amazon Aurora Serverless v2 PostgreSQL — Configured
+* **Configuration**: PostgreSQL engine `16.1`, Serverless v2 capacity (`min: 0.5 ACU`, `max: 1.0 ACU`), `manage_master_user_password = true` (AWS Secrets Manager integration), and dedicated DB Subnet Group across private subnets.
 * **Why it matters**:
-  * Jira Data Center does not include a built-in database for production.
-  * All Jira pods in the cluster must read from and write to the same single database instance (with multi-AZ replication recommended).
-  * Without RDS, the Jira Helm chart cannot initialize its database schema and will crash on startup (`DatabaseConnectionException`).
+  * Jira Data Center does not include an embedded database for production; all cluster nodes connect to the same central database.
+  * Aurora Serverless v2 instantly scales compute capacity up and down without downtime and provides automated Multi-AZ replication.
+  * Password credentials are securely generated and rotated by AWS Secrets Manager rather than plaintext in code.
 
-### 3. Storage Architecture: Local Home vs. Shared Home
+### 3. Database Security Group (`security/` module) — Configured
+* **Configuration**: `aws_security_group.rds_sg` with `ingress` on TCP port `5432` restricted to `var.vpc_cidr` (`10.0.0.0/16`), and stateful egress.
+* **Why it matters**:
+  * Prevents unauthorized access while ensuring all worker nodes inside the VPC private subnets can communicate with the Aurora database cluster endpoint.
+
+### 4. Storage Architecture: Local Home vs. Shared Home
 Jira Data Center strictly separates local instance data from cluster-shared data:
 
 | Storage Type | Mount Path | AWS Service | Access Mode | Purpose |
@@ -93,21 +96,21 @@ Jira Data Center strictly separates local instance data from cluster-shared data
 | **Shared Home** | `/var/atlassian/application-data/jira/shared` | **AWS EFS** | `ReadWriteMany` (RWX) | Shared files: attachments, avatars, installed plugins, and cluster lock files. |
 
 #### What are CSI Drivers?
-Kubernetes pods cannot natively provision AWS disks without "hardware drivers":
+Kubernetes pods cannot natively provision AWS disks without CSI (Container Storage Interface) "drivers":
 * **AWS EBS CSI Driver**: Automatically provisions and attaches EBS volumes when Jira requests local storage.
 * **AWS EFS CSI Driver**: Automatically mounts the AWS EFS file system when Jira requests `ReadWriteMany` shared storage.
 
-### 4. OIDC Provider & IRSA (IAM Roles for Service Accounts)
+### 5. OIDC Provider & IRSA (IAM Roles for Service Accounts)
 * **What it does**: Establishes OpenID Connect federated trust between EKS and AWS IAM.
 * **Why it matters**:
   * Pods (like the EBS CSI driver, EFS CSI driver, and AWS Load Balancer Controller) need permission to call AWS APIs (e.g., create disks, mount EFS, create ALBs).
   * Rather than storing hardcoded AWS Access Keys in configuration files, **IRSA** injects short-lived, automatically rotated AWS IAM tokens directly into pods.
 
-### 5. Ingress & AWS Load Balancer Controller (ALB)
+### 6. Ingress & AWS Load Balancer Controller (ALB)
 * **What it does**: Manages an external Application Load Balancer to direct traffic to Jira pods running in private subnets.
 * **Sticky Sessions**: In Jira Data Center, user sessions must stick to the same node for consecutive requests (cookie affinity) to prevent session loss or state desynchronization. The ALB handles this automatically.
 
-### 6. Subnet Discovery Tags
+### 7. Subnet Discovery Tags
 Subnets must be tagged so Kubernetes controllers know how to route infrastructure:
 * **Public Subnets**: `kubernetes.io/role/elb = "1"` (Tells AWS Load Balancer Controller where to deploy public ALBs).
 * **Private Subnets**: `kubernetes.io/role/internal-elb = "1"` (For internal load balancers).
@@ -119,11 +122,13 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 | Requirement | Description | Status | Next Steps |
 | :---: | :--- | :---: | :--- |
 | **VPC & Networking** | 3 Public Subnets, 3 Private Subnets, IGW, NAT GW | ✅ Ready | Add ALB discovery tags |
+| **DB Subnet Group** | DB Subnet Group across private subnets | ✅ Ready | - |
+| **Database Security** | Security group allowing TCP 5432 from VPC | ✅ Ready | - |
+| **Aurora PostgreSQL** | Aurora Serverless v2 PostgreSQL v16.1 cluster | ✅ Ready | - |
 | **EKS Control Plane** | AWS EKS Cluster v1.31 | ✅ Ready | - |
-| **Node Sizing** | EC2 instances with >= 16 GB RAM | ⚠️ Update Needed | Set `instance_types = ["m5.xlarge"]` in node group |
-| **EKS OIDC Provider** | IAM OIDC provider for IRSA | ⏳ Pending | Add `aws_iam_openid_connect_provider` resource |
+| **Node Group Sizing** | 2x `m5.xlarge` (16 GB RAM, 50 GB disk) | ✅ Ready | - |
+| **EKS OIDC Provider** | IAM OIDC provider for IRSA | ⏳ Pending | Add `aws_iam_openid_connect_provider` |
 | **EBS CSI Driver** | Dynamic volume provisioning for `jira-local-home` | ⏳ Pending | Add `aws-ebs-csi-driver` EKS add-on + IAM role |
-| **AWS RDS PostgreSQL** | Relational database for Jira DC | ⏳ Pending | Create RDS PostgreSQL module |
 | **AWS EFS + EFS CSI** | Shared storage for `jira-shared-home` | ⏳ Pending | Create EFS file system + install EFS CSI driver |
 | **Ingress & ALB** | Expose web UI with cookie sticky sessions | ⏳ Pending | Deploy AWS Load Balancer Controller |
 
@@ -142,7 +147,7 @@ jira-dc-eks-rds-setup/
 │   └── dev/
 │       ├── terraform.tfvars # Dev environment variables
 │       └── backend.tfvars   # S3 / DynamoDB remote state backend config
-├── vpc/                    # VPC module (subnets, IGW, NAT GW, route tables)
+├── vpc/                    # VPC module (subnets, IGW, NAT GW, DB subnet group)
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
@@ -150,7 +155,15 @@ jira-dc-eks-rds-setup/
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
-└── eks/                    # EKS module (Cluster, Node Group)
+├── security/               # Security module (RDS port 5432 security group & rules)
+│   ├── main.tf
+│   ├── variables.tf
+│   └── output.tf
+├── rds/                    # Database module (Aurora Serverless v2 PostgreSQL v16.1)
+│   ├── main.tf
+│   ├── variables.tf
+│   └── output.tf
+└── eks/                    # EKS module (Cluster, Node Group: m5.xlarge, 50GB)
     ├── main.tf
     ├── variables.tf
     └── output.tf
