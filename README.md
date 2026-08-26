@@ -25,7 +25,7 @@ flowchart TD
 
         subgraph Private_Subnets ["Private Subnets (3 AZs) - Tag: kubernetes.io/role/internal-elb=1"]
             subgraph EKS_Cluster ["Amazon EKS Cluster (Control Plane v1.31)"]
-                OIDC["IAM OIDC Identity Provider (IRSA)"]
+                OIDC["IAM OIDC Identity Provider (IRSA)\n[Module: oidc]"]
 
                 subgraph EKS_Nodes ["EKS Managed Node Group (2x m5.xlarge - 4 vCPU, 16 GB RAM, 50 GB Disk)"]
                     subgraph Pod1 ["Jira DC Pod 1"]
@@ -62,7 +62,7 @@ flowchart TD
     JiraCore1 -->|NFS / Port 2049| EFS
     JiraCore2 -->|NFS / Port 2049| EFS
 
-    OIDC -.->|Temporary IAM Credentials| EKS_Nodes
+    OIDC -.->|Temporary IAM Credentials (IRSA)| EKS_Nodes
 ```
 
 ---
@@ -100,11 +100,15 @@ Kubernetes pods cannot natively provision AWS disks without CSI (Container Stora
 * **AWS EBS CSI Driver**: Automatically provisions and attaches EBS volumes when Jira requests local storage.
 * **AWS EFS CSI Driver**: Automatically mounts the AWS EFS file system when Jira requests `ReadWriteMany` shared storage.
 
-### 5. OIDC Provider & IRSA (IAM Roles for Service Accounts)
-* **What it does**: Establishes OpenID Connect federated trust between EKS and AWS IAM.
+### 5. IAM OIDC Provider (`oidc/` module) — Configured
+* **Configuration**: 
+  * `aws_iam_openid_connect_provider` registered with the EKS cluster's issuer URL (`module.eks.oidc_url`).
+  * `client_id_list = ["sts.amazonaws.com"]`
+  * Dynamic TLS thumbprint retrieval via `data "tls_certificate"`.
 * **Why it matters**:
-  * Pods (like the EBS CSI driver, EFS CSI driver, and AWS Load Balancer Controller) need permission to call AWS APIs (e.g., create disks, mount EFS, create ALBs).
-  * Rather than storing hardcoded AWS Access Keys in configuration files, **IRSA** injects short-lived, automatically rotated AWS IAM tokens directly into pods.
+  * Establishes cryptographic federated trust between EKS and AWS IAM.
+  * Enables **IRSA (IAM Roles for Service Accounts)** so that pods (e.g. EBS CSI driver, EFS CSI driver, AWS Load Balancer Controller) receive temporary scoped AWS credentials.
+  * Prevents pods from inheriting full node-level IAM credentials via IMDS (least privilege).
 
 ### 6. Ingress & AWS Load Balancer Controller (ALB)
 * **What it does**: Manages an external Application Load Balancer to direct traffic to Jira pods running in private subnets.
@@ -127,7 +131,7 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 | **Aurora PostgreSQL** | Aurora Serverless v2 PostgreSQL v16.1 cluster | ✅ Ready | - |
 | **EKS Control Plane** | AWS EKS Cluster v1.31 | ✅ Ready | - |
 | **Node Group Sizing** | 2x `m5.xlarge` (16 GB RAM, 50 GB disk) | ✅ Ready | - |
-| **EKS OIDC Provider** | IAM OIDC provider for IRSA | ⏳ Pending | Add `aws_iam_openid_connect_provider` |
+| **EKS OIDC Provider** | IAM OIDC provider for IRSA (`oidc/` module) | ✅ Ready | - |
 | **EBS CSI Driver** | Dynamic volume provisioning for `jira-local-home` | ⏳ Pending | Add `aws-ebs-csi-driver` EKS add-on + IAM role |
 | **AWS EFS + EFS CSI** | Shared storage for `jira-shared-home` | ⏳ Pending | Create EFS file system + install EFS CSI driver |
 | **Ingress & ALB** | Expose web UI with cookie sticky sessions | ⏳ Pending | Deploy AWS Load Balancer Controller |
@@ -163,7 +167,11 @@ jira-dc-eks-rds-setup/
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
-└── eks/                    # EKS module (Cluster, Node Group: m5.xlarge, 50GB)
+├── eks/                    # EKS module (Cluster, Node Group: m5.xlarge, 50GB, OIDC output)
+│   ├── main.tf
+│   ├── variables.tf
+│   └── output.tf
+└── oidc/                   # IAM OIDC Provider module for IRSA
     ├── main.tf
     ├── variables.tf
     └── output.tf

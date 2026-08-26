@@ -236,5 +236,106 @@
     </div>
   </div>
 
+  <!-- Card 9 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 9</span>
+      <span>If we already have Cluster & Node IAM roles, why do we still need an OIDC Provider?</span>
+    </div>
+    <div class="card-back">
+      <p>EKS security operates across <strong>3 distinct layers</strong>:</p>
+      <ol>
+        <li><strong>EKS Cluster Role:</strong> Used exclusively by the AWS-managed Control Plane (<code>eks.amazonaws.com</code>) to manage cross-account ENIs and ELBs. Pods cannot use it.</li>
+        <li><strong>Node Group Role (EC2 Instance Profile):</strong> Used by the EC2 host OS and <code>kubelet</code> to join the cluster, assign VPC IPs via CNI, and pull images from ECR.</li>
+        <li><strong>Pod-Level IAM (IRSA via OIDC):</strong> If you attach application policies (e.g. EBS/EFS/S3) to the Node Group role, <strong>every pod on that EC2 instance inherits those permissions</strong>, creating a critical security vulnerability.</li>
+      </ol>
+      <p><strong>Why OIDC is mandatory:</strong> The OIDC Provider establishes cryptographic federated trust between EKS and AWS IAM, enabling <strong>IRSA (IAM Roles for Service Accounts)</strong> so that only specific, designated pods get granular AWS IAM permissions.</p>
+    </div>
+  </div>
+
+  <!-- Card 10 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 10</span>
+      <span>What is the step-by-step authentication flow of IRSA via OIDC under the hood?</span>
+    </div>
+    <div class="card-back">
+      <ol>
+        <li><strong>Projected Token Injection:</strong> Kubernetes automatically projects an OIDC JSON Web Token (JWT) into the pod at <code>/var/run/secrets/eks.amazonaws.com/serviceaccount/token</code>.</li>
+        <li><strong>SDK Call:</strong> The AWS SDK inside the pod calls AWS STS via <code>sts:AssumeRoleWithWebIdentity</code>, sending the JWT and the target IAM Role ARN.</li>
+        <li><strong>Cryptographic Verification:</strong> AWS STS contacts the cluster's OIDC Provider endpoint to verify the JWT signature against the cluster's public keys.</li>
+        <li><strong>Trust Policy Evaluation:</strong> STS validates the IAM Role trust condition matching the token subject: <code>system:serviceaccount:&lt;namespace&gt;:&lt;name&gt;</code>.</li>
+        <li><strong>Temporary Scoped Credentials:</strong> STS issues short-lived, auto-rotating AWS credentials (AccessKey, SecretKey, SessionToken) strictly to that specific pod.</li>
+      </ol>
+      <p><strong>Key Advantage:</strong> Zero long-term AWS access keys stored in code, configmaps, or container images.</p>
+    </div>
+  </div>
+
+  <!-- Card 11 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 11</span>
+      <span>What is the IMDS security vulnerability, and how do IMDSv2 and OIDC protect against it?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>The Vulnerability:</strong> Any container on an EC2 instance can query the EC2 Instance Metadata Service (<code>http://169.254.169.254/latest/meta-data/iam/security-credentials/</code>) and steal the node's IAM credentials. If the node role has EBS, EFS, or S3 write access, any compromised pod inherits full AWS access.</li>
+        <li><strong>Defense 1 (IMDSv2 Hop Limit):</strong> Configure <code>http_put_response_hop_limit = 1</code>. Network packets crossing the container bridge network decrement IP TTL by 1, blocking pods from reaching the metadata IP while allowing the host EC2 OS to access it.</li>
+        <li><strong>Defense 2 (IRSA via OIDC):</strong> Keeps the Node Group IAM Role strictly scoped to base infrastructure (<code>EKSWorkerNodePolicy</code>, <code>CNI_Policy</code>, <code>ECRReadOnly</code>) and delegates application permissions strictly to individual ServiceAccounts.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 12 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 12</span>
+      <span>How do you configure the EKS OIDC Provider and an IRSA IAM Trust Policy in Terraform?</span>
+    </div>
+    <div class="card-back">
+      <p><strong>1. Create the OIDC Provider:</strong></p>
+      <pre><code>data "tls_certificate" "eks" {
+  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+}</code></pre>
+      <p><strong>2. Pod IAM Role Trust Policy:</strong></p>
+      <pre><code>assume_role_policy = jsonencode({
+  Version = "2012-10-17"
+  Statement = [{
+    Action    = "sts:AssumeRoleWithWebIdentity"
+    Effect    = "Allow"
+    Principal = { Federated = aws_iam_openid_connect_provider.eks.arn }
+    Condition = {
+      StringEquals = {
+        "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+        "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+      }
+    }
+  }]
+})</code></pre>
+    </div>
+  </div>
+
+  <!-- Card 13 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 13</span>
+      <span>Which components in Jira Data Center on EKS require IRSA via OIDC?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>AWS EBS CSI Driver (<code>ebs-csi-controller-sa</code>):</strong> Policy <code>AmazonEBSCSIDriverPolicy</code> to dynamically provision and attach EBS <code>gp3</code> volumes for <code>jira-local-home</code> (RWO).</li>
+        <li><strong>AWS EFS CSI Driver (<code>efs-csi-controller-sa</code>):</strong> Policy <code>AmazonEFSCSIDriverPolicy</code> to automatically mount the shared EFS filesystem for <code>jira-shared-home</code> (RWX).</li>
+        <li><strong>AWS Load Balancer Controller:</strong> Custom ALB IAM Policy to discover Ingress resources and automatically provision the Application Load Balancer with cookie-based sticky sessions.</li>
+        <li><strong>Jira Core Application Pods:</strong> <strong>Zero direct AWS IAM permissions needed</strong>. They only communicate with RDS (PostgreSQL) and mounted filesystem paths, following strict Principle of Least Privilege.</li>
+      </ul>
+    </div>
+  </div>
+
 </body>
 </html>

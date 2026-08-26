@@ -39,3 +39,19 @@ module "rds" {
 }
 
 
+module "oidc" {
+  source   = "./oidc"
+  project  = var.project
+  env      = var.env
+  oidc_url = module.eks.oidc_url
+}
+
+
+module "efs" {
+  source             = "./efs"
+  project            = var.project
+  env                = var.env
+  private_subnet_ids = module.vpc.private_subnet_ids
+}
+
+
