@@ -19,10 +19,12 @@ resource "aws_eks_node_group" "example" {
   node_group_name = "example"
   node_role_arn   = var.node_group_role_arn
   subnet_ids      = var.subnet_ids
+  instance_types  = var.instance_types
+  disk_size       = var.disk_size
 
   scaling_config {
-    desired_size = 1
-    max_size     = 2
+    desired_size = 2
+    max_size     = 3
     min_size     = 1
   }
 
