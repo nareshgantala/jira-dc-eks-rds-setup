@@ -140,7 +140,8 @@ Create your custom values file for the official Atlassian Jira Data Center Helm 
 
 ```yaml
 # jira-values.yaml
-replicaCount: 2
+# Start with replicaCount: 1 until the first-time setup wizard completes in the browser
+replicaCount: 1
 
 jira:
   service:
@@ -151,22 +152,23 @@ jira:
     container:
       requests:
         cpu: "2"
-        memory: "6Gi"
+        memory: "4Gi"
       limits:
         cpu: "3"
-        memory: "10Gi"
+        memory: "8Gi"
     jvm:
-      minHeap: "4g"
-      maxHeap: "6g"
+      minHeap: "2g"
+      maxHeap: "4g"
 
-  # Database configuration pointing to Aurora PostgreSQL
-  database:
-    type: postgres72
-    url: "jdbc:postgresql://<REPLACE_WITH_RDS_CLUSTER_ENDPOINT>:5432/jiradb"
-    credentials:
-      secretName: jira-db-secret
-      usernameSecretKey: username
-      passwordSecretKey: password
+# REQUIRED - Database configuration pointing to Aurora PostgreSQL (Top-level key)
+database:
+  type: postgres72
+  url: "jdbc:postgresql://<REPLACE_WITH_RDS_CLUSTER_ENDPOINT>:5432/jiradb"
+  driver: org.postgresql.Driver
+  credentials:
+    secretName: jira-db-secret
+    usernameSecretKey: username
+    passwordSecretKey: password
 
 # Storage Configuration
 volumes:
@@ -194,6 +196,9 @@ ingress:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # Health Check configuration (Jira returns 200 on /status and 302 on / during setup)
+    alb.ingress.kubernetes.io/healthcheck-path: /status
+    alb.ingress.kubernetes.io/success-codes: "200,302"
     # Sticky Sessions (Mandatory for Jira Data Center clustering)
     alb.ingress.kubernetes.io/affinity: cookie
     alb.ingress.kubernetes.io/affinity-mode: persistent
@@ -260,10 +265,11 @@ Open this address in your web browser to access the **Jira Data Center Setup Wiz
 
 ---
 
-## 8. Troubleshooting Checklist
-
 | Symptom | Likely Cause | Resolution |
 |---|---|---|
+| Pod stuck in `Init:0/1` (`Failed to resolve fs-xxxx.efs...`) | VPC DNS hostnames disabled or EFS CSI node SA not in trust policy | Ensure `enable_dns_hostnames = true` in `vpc/` and `efs_csi_role` trust policy permits `system:serviceaccount:kube-system:efs-csi-*`. |
+| ALB returns `503 Service Temporarily Unavailable` (`ResponseCodeMismatch [302]`) | ALB health check querying `/` expecting `200`, but Jira returns `302` redirect | Add `alb.ingress.kubernetes.io/healthcheck-path: /status` and `alb.ingress.kubernetes.io/success-codes: "200,302"` to ingress annotations in `jira-values.yaml`. |
+| Helm fails with `incomplete UTF-16 character` | `jira-values.yaml` was saved in UTF-16LE encoding (PowerShell default) | Re-save the file with standard UTF-8 encoding. |
 | Pod stuck in `ContainerCreating` on volume mount | EFS Security Group not allowing port 2049 | Verify EFS mount targets have `efs-sg` attached (already configured in Terraform). |
 | Ingress has no `ADDRESS` | ALB Controller failed to assume role or missing permissions | Verify controller pod logs: `kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`. |
 | DB Connection Timeout | Pods unable to reach RDS on port 5432 | Verify RDS Security group allows traffic from `10.0.0.0/16` (already configured in `security/`). |

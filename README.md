@@ -115,7 +115,7 @@ Jira Data Center strictly separates local instance data from cluster-shared data
 #### What are CSI Drivers & Why Do They Need IAM Roles?
 Kubernetes pods cannot natively create or mount AWS disks without CSI (Container Storage Interface) drivers. These drivers run as controller pods inside `kube-system` and require **IRSA IAM Roles** to call AWS APIs on your behalf:
 * **AWS EBS CSI Driver**: Uses `aws_iam_role.ebs_csi_role` (`AmazonEBSCSIDriverPolicy`) to call `ec2:CreateVolume` and `ec2:AttachVolume` for Jira's local block storage (`ReadWriteOnce`).
-* **AWS EFS CSI Driver**: Uses `aws_iam_role.efs_csi_role` (`AmazonEFSCSIDriverPolicy`) to call `elasticfilesystem:ClientMount` and `elasticfilesystem:ClientWrite` to mount shared NFS storage (`ReadWriteMany`).
+* **AWS EFS CSI Driver**: Uses `aws_iam_role.efs_csi_role` (`AmazonEFSCSIDriverPolicy`) with an IRSA trust policy scoped to `system:serviceaccount:kube-system:efs-csi-*` (covering both `efs-csi-controller-sa` and the `efs-csi-node-sa` daemonset) to call `elasticfilesystem:ClientMount` and mount shared NFS storage (`ReadWriteMany`).
 
 ```mermaid
 flowchart LR
@@ -435,4 +435,48 @@ values = [
 ### Declarative EFS StorageClass Deployment via Terraform
 * **Before**: Users had to run `terraform output -raw efs_file_system_id`, manually edit `efs-storageclass.yaml`, and run `kubectl apply -f efs-storageclass.yaml`.
 * **Fix**: Provisioned natively using Terraform's `kubernetes_storage_class_v1` resource, dynamically passing `module.efs.efs_file_system_id`. This unifies cloud and in-cluster resources under a single `terraform apply`.
+
+### Amazon EFS Mount Failure — VPC DNS Hostnames & Node DaemonSet IRSA
+During the initial Jira pod startup, the init container (`nfs-permission-fixer`) was stuck in `Init:0/1` with mount errors:
+```text
+Failed to resolve "fs-09205c11977baaf08.efs.us-east-1.amazonaws.com"
+Attempting to lookup mount target ip address using botocore. Unexpected error: Not authorized to perform sts:AssumeRoleWithWebIdentity
+```
+
+* **Root Cause 1 (DNS)**: Custom AWS VPCs default to `enable_dns_hostnames = false`. Without DNS hostnames enabled, Amazon Route 53 Resolver cannot resolve regional EFS DNS names inside the VPC.
+* **Root Cause 2 (IRSA Trust Policy)**: When the EFS mount helper's DNS resolution fails, it falls back to botocore AWS API calls to locate the mount target IP. However, the IAM role trust policy only allowed `system:serviceaccount:kube-system:efs-csi-controller-sa`. The node-level daemonset (`efs-csi-node-sa`), which executes the actual NFS mount command on worker nodes, was rejected by STS.
+* **Fixes Applied**:
+  1. Enabled DNS in [vpc/main.tf](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/vpc/main.tf):
+     ```hcl
+     resource "aws_vpc" "main" {
+       cidr_block           = var.vpc_cidr
+       enable_dns_hostnames = true
+       enable_dns_support   = true
+       # ...
+     }
+     ```
+  2. Updated the IAM trust policy in [main.tf](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/main.tf) to cover all EFS CSI service accounts:
+     ```hcl
+     Condition = {
+       StringLike = {
+         "${module.oidc.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:efs-csi-*"
+         "${module.oidc.oidc_provider_url}:aud" = "sts.amazonaws.com"
+       }
+     }
+     ```
+
+### AWS Application Load Balancer — Target ResponseCodeMismatch (HTTP 302 vs 200)
+After Jira started running (`1/1 Ready`), accessing the ALB URL returned `503 Service Temporarily Unavailable` because the AWS Target Group marked the target `unhealthy`:
+```text
+"Reason": "Target.ResponseCodeMismatch", "Description": "Health checks failed with these codes: [302]"
+```
+
+* **Root Cause**: By default, the AWS ALB health check sends a `GET /` request and expects an HTTP `200` response. During first-time setup (and unauthenticated states), Jira sends an HTTP `302 Found` redirect to `/secure/SetupDatabase!default.jspa`. The ALB saw `302` instead of `200` and flagged the target unhealthy.
+* **Fix**: Added explicit healthcheck annotations in [helm/jira-values.yaml](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/helm/jira-values.yaml):
+  ```yaml
+  alb.ingress.kubernetes.io/healthcheck-path: /status
+  alb.ingress.kubernetes.io/success-codes: "200,302"
+  ```
+  This points the ALB health check to Jira's dedicated `/status` endpoint (which returns `200`) and permits `302` redirects, immediately transitioning the target to `healthy`.
+
 

@@ -8,7 +8,7 @@ A complete architectural reference defining every single component created in th
 
 | Component / Resource | Type | One-Line Definition |
 | :--- | :--- | :--- |
-| **`aws_vpc.main`** | VPC | The isolated virtual cloud network (`10.0.0.0/16`) housing all Jira Data Center compute, database, and storage assets. |
+| **`aws_vpc.main`** | VPC | The isolated virtual cloud network (`10.0.0.0/16`) with private DNS hostnames and resolution enabled (`enable_dns_hostnames = true`) to support EFS endpoints, housing all Jira compute, database, and storage assets. |
 | **`aws_internet_gateway.gw`** | Gateway | The VPC edge gateway enabling bidirectional Internet communication for public subnets and the Application Load Balancer. |
 | **`aws_subnet.public_subnet`** | Subnet (x3) | Three public subnets across 3 AZs with auto-assigned public IPs hosting the Internet-facing ALB, NAT Gateway, and ingress entry points (`kubernetes.io/role/elb=1`). |
 | **`aws_subnet.private_subnet`** | Subnet (x3) | Three isolated subnets across 3 AZs hosting EKS worker nodes, RDS PostgreSQL, and EFS mount targets with zero direct Internet ingress (`kubernetes.io/role/internal-elb=1`). |
@@ -80,7 +80,7 @@ A complete architectural reference defining every single component created in th
 | **`aws_iam_role.ebs_csi_role`** | IAM Role (IRSA) | Role assumed by the EBS CSI controller pod via OIDC web identity token federation (`kube-system:ebs-csi-controller-sa`). |
 | **`AmazonEBSCSIDriverPolicy`** | Policy Attachment | Grants EBS CSI driver permissions to create, attach, detach, and delete AWS EBS `gp3` volumes dynamically. |
 | **`aws_eks_addon.ebs_csi`** | EKS Add-on | In-cluster storage driver managing `gp3` block storage volumes for Jira Data Center local home directories (`ReadWriteOnce` — search indexes, caches, and logs). |
-| **`aws_iam_role.efs_csi_role`** | IAM Role (IRSA) | Role assumed by the EFS CSI controller pod via OIDC web identity token federation (`kube-system:efs-csi-controller-sa`). |
+| **`aws_iam_role.efs_csi_role`** | IAM Role (IRSA) | Role assumed by both the EFS CSI controller and node daemonset pods via OIDC token federation (`system:serviceaccount:kube-system:efs-csi-*`). |
 | **`AmazonEFSCSIDriverPolicy`** | Policy Attachment | Grants EFS CSI driver permissions to create EFS access points and authorize pod NFS client mounts. |
 | **`aws_eks_addon.efs_csi`** | EKS Add-on | In-cluster storage driver managing concurrent NFS mounts into Jira Data Center application pods for shared home directories (`ReadWriteMany`). |
 

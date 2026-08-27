@@ -113,8 +113,8 @@ resource "aws_iam_role" "efs_csi_role" {
           Federated = module.oidc.oidc_provider_arn
         }
         Condition = {
-          StringEquals = {
-            "${module.oidc.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:efs-csi-controller-sa"
+          StringLike = {
+            "${module.oidc.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:efs-csi-*"
             "${module.oidc.oidc_provider_url}:aud" = "sts.amazonaws.com"
           }
         }
