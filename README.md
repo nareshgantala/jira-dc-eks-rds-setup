@@ -297,6 +297,8 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 ```text
 jira-dc-eks-rds-setup/
 ├── README.md                              # Infrastructure documentation and architecture diagram
+├── TEARDOWN_AND_DESTROY_GUIDE.md          # Step-by-step zero-cost teardown & destroy guide
+├── destroy-lab.ps1                        # Automated 1-click PowerShell teardown script
 ├── INFRASTRUCTURE_COMPONENTS_README.md    # One-liner architectural catalog for all components
 ├── JIRA_HELM_INSTALLATION_GUIDE.md        # Step-by-step Jira DC Helm chart installation guide
 ├── ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md # Defense-in-depth: Security Groups & NACLs guide
@@ -364,6 +366,23 @@ terraform plan -var-file="env/dev/terraform.tfvars"
 ```bash
 terraform apply -var-file="env/dev/terraform.tfvars"
 ```
+
+### 5. Teardown & Clean Destruction (Zero Extra Cost)
+To safely destroy all resources without leaving orphaned ALBs, ENIs, or EBS volumes:
+
+```powershell
+# Option A: Automated 1-click script (Windows PowerShell)
+.\destroy-lab.ps1
+
+# Option B: Manual step-by-step
+helm uninstall jira -n jira
+kubectl delete pvc --all -n jira
+kubectl delete namespace jira
+# Wait ~60s for the AWS Application Load Balancer to delete in AWS, then:
+terraform destroy -var-file="env/dev/terraform.tfvars"
+```
+
+> 📖 **Full Destroy Guide**: For detailed verification commands ensuring $0 remaining AWS cost, see [TEARDOWN_AND_DESTROY_GUIDE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/TEARDOWN_AND_DESTROY_GUIDE.md).
 
 ---
 

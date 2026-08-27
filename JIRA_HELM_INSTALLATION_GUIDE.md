@@ -274,3 +274,23 @@ Open this address in your web browser to access the **Jira Data Center Setup Wiz
 | Ingress has no `ADDRESS` | ALB Controller failed to assume role or missing permissions | Verify controller pod logs: `kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`. |
 | DB Connection Timeout | Pods unable to reach RDS on port 5432 | Verify RDS Security group allows traffic from `10.0.0.0/16` (already configured in `security/`). |
 | Pod crashing with `OOMKilled` | Node or container heap limit exceeded | Verify worker nodes are `m5.xlarge` with sufficient JVM heap allocated. |
+
+---
+
+## 9. Clean Teardown & Uninstall
+
+To completely remove Jira and its dynamically created AWS resources (ALB and EBS volumes):
+
+```powershell
+# 1. Uninstall the Helm release (triggers AWS Load Balancer Controller to delete the ALB)
+helm uninstall jira -n jira
+
+# 2. Delete the PVCs (releases and deletes the AWS EBS gp3 volume)
+kubectl delete pvc --all -n jira
+
+# 3. Delete the namespace
+kubectl delete namespace jira
+```
+
+> 📖 **Full Cloud Infrastructure Teardown**: To destroy the remaining EKS, RDS, EFS, and VPC resources, see the comprehensive [TEARDOWN_AND_DESTROY_GUIDE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/TEARDOWN_AND_DESTROY_GUIDE.md) or execute `.\destroy-lab.ps1`.
+
