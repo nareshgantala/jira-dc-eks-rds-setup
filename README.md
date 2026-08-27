@@ -120,9 +120,101 @@ Kubernetes pods cannot natively provision AWS disks without CSI (Container Stora
 
 ### 6. Ingress & AWS Load Balancer Controller (ALB) — Configured
 * **What it does**: Manages an external Application Load Balancer to direct traffic to Jira pods running in private subnets.
-* **Sticky Sessions**: In Jira Data Center, user sessions must stick to the same node for consecutive requests (cookie affinity) to prevent session loss or state desynchronization. The ALB handles this automatically.
+* **Sticky Sessions**: In Jira Data Center, user sessions must stick to the same node for consecutive requests (cookie affinity) to prevent session loss or state desynchronization. The ALB handles this automatically via the `AWSALB` cookie.
 * **Implementation**: Deployed via `helm_release` (`aws-load-balancer-controller` chart from `https://aws.github.io/eks-charts`) with IRSA annotation on its `ServiceAccount` pointing to `aws_iam_role.alb_controller_role`.
 * **Helm Provider v3 Note**: The `set {}` nested block syntax was removed in Helm provider `~> 3.0`. Chart values are now supplied via `values = [ yamlencode({...}) ]`, which also handles nested keys (e.g. `serviceAccount.annotations`) more cleanly.
+
+#### Architecture: IAM Roles, OIDC, ALB Controller & AWS ALB
+
+```mermaid
+flowchart TB
+    subgraph AWS_Cloud ["AWS Cloud (Account & IAM Layer)"]
+        subgraph IAM_Identity ["IAM & Security"]
+            OIDC_IDP["IAM OIDC Identity Provider\n(oidc.eks.us-east-1.amazonaws.com/id/...)"]
+            STS["AWS STS\n(Security Token Service)"]
+            
+            subgraph IAM_Role ["IAM Role: alb-controller-role"]
+                TrustPolicy["Trust Policy:\nAllows STS AssumeRoleWithWebIdentity\nIF sub = system:serviceaccount:\nkube-system:aws-load-balancer-controller"]
+                PermPolicy["Permission Policy:\nalb-controller-policy\n(elasticloadbalancing:*, ec2:Describe*)"]
+            end
+        end
+
+        subgraph VPC ["VPC: 10.0.0.0/16"]
+            subgraph Public_Subnets ["Public Subnets (3 AZs) - Tag: kubernetes.io/role/elb=1"]
+                ALB["AWS Application Load Balancer (ALB)\n(Dual-AZ / Multi-AZ Internet Facing)"]
+            end
+
+            subgraph Private_Subnets ["Private Subnets (3 AZs)"]
+                subgraph EKS_Cluster ["Amazon EKS Cluster (v1.31)"]
+                    subgraph Kube_System ["Namespace: kube-system"]
+                        SA["ServiceAccount:\naws-load-balancer-controller\n(annotation: role-arn)"]
+                        ControllerPod["AWS Load Balancer Controller Pod\n(Daemon watching Ingress)"]
+                    end
+
+                    subgraph Jira_NS ["Namespace: jira"]
+                        Ingress["Ingress Resource:\nclassName: alb\nscheme: internet-facing"]
+                        JiraPods["Jira Data Center Pods\n(Port 8080)"]
+                    end
+                end
+            end
+        end
+    end
+
+    %% Identity & Auth Connections
+    SA -.->|Annotates role ARN| IAM_Role
+    ControllerPod -->|1. Sends OIDC JWT Token| STS
+    STS -->|2. Validates JWT Signature with| OIDC_IDP
+    STS -->|3. Checks Trust Policy & assumes| IAM_Role
+    STS -.->|4. Returns temporary AWS credentials| ControllerPod
+
+    %% Provisioning Connection
+    Ingress -.->|Watched by| ControllerPod
+    ControllerPod -->|5. Calls AWS ELB APIs to create| ALB
+
+    %% Data Flow
+    InternetUsers(["Internet Users"]) -->|HTTPS:443 / HTTP:80| ALB
+    ALB -->|Sticky Session traffic directly to pod IPs| JiraPods
+```
+
+#### Step-by-Step IRSA & ALB Provisioning Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Pod as ALB Controller Pod (in kube-system)
+    participant K8s as EKS API (OIDC Issuer)
+    participant STS as AWS STS (Token Service)
+    participant IAM as AWS IAM Role
+    participant AWS_API as AWS ELB / EC2 API
+    participant ALB as AWS Application Load Balancer (in Public Subnets)
+
+    Note over Pod,K8s: Phase 1: Authentication via IRSA
+    K8s->>Pod: Injects signed OIDC JWT token into pod filesystem
+    Pod->>STS: Calls AssumeRoleWithWebIdentity (passes JWT token + Role ARN)
+    STS->>K8s: Verifies token cryptographic signature against OIDC Provider
+    STS->>IAM: Verifies ServiceAccount matches Trust Policy condition
+    IAM-->>STS: Approved!
+    STS-->>Pod: Returns temporary AWS credentials (AccessKey, SecretKey, SessionToken)
+
+    Note over Pod,ALB: Phase 2: Ingress Detection & Provisioning
+    Pod->>Pod: Watches Kubernetes API & detects new Ingress (className: alb)
+    Pod->>AWS_API: Calls DescribeSubnets (finds subnets tagged 'kubernetes.io/role/elb=1')
+    Pod->>AWS_API: Calls CreateLoadBalancer, CreateTargetGroup, CreateListener
+    AWS_API->>ALB: Provisions physical AWS ALB in public subnets
+    Pod->>K8s: Updates Ingress status with ALB DNS address
+```
+
+#### The 4 Core Components Explained
+
+1. **IAM Role (`alb_controller_role`)**:
+   - **Trust Policy**: Governs **WHO** can assume the role. Restricts access exclusively to `system:serviceaccount:kube-system:aws-load-balancer-controller` via OIDC federation.
+   - **Permission Policy** (`alb_iam_policy.json`): Governs **WHAT** the role can do in AWS (`elasticloadbalancing:*`, `ec2:DescribeSubnets`, `ec2:AuthorizeSecurityGroupIngress`).
+2. **IAM OIDC Identity Provider (`oidc/` module)**:
+   - Acts as the cryptographic bridge between EKS and AWS IAM. Eliminates hard-coded credentials; pods authenticate using short-lived signed JWTs.
+3. **AWS Load Balancer Controller (`helm_release.alb_controller`)**:
+   - An in-cluster software daemon running in `kube-system`. It does **not** create load balancers by default; it continuously watches for `Ingress` resources with `className: alb` and triggers AWS API calls to provision or modify the ALB.
+4. **AWS Application Load Balancer (ALB)**:
+   - The physical AWS Layer 7 load balancer deployed in the **public subnets**. Enforces cookie-based sticky sessions (`AWSALB`) to keep user requests bound to the same Jira pod.
 
 ### 7. Subnet Discovery Tags
 Subnets must be tagged so Kubernetes controllers know how to route infrastructure:

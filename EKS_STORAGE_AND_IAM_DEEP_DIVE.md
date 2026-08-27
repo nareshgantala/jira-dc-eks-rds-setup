@@ -12,6 +12,7 @@ This comprehensive technical guide explains how **Kubernetes Storage** and **AWS
 5. [Connecting AWS EFS to Kubernetes: Where Are Mount Points Referenced?](#5-connecting-aws-efs-to-kubernetes-where-are-mount-points-referenced)
 6. [Architectural Comparison: EBS (Block/RWO) vs. EFS (Network/RWX)](#6-architectural-comparison-ebs-blockrwo-vs-efs-networkrwx)
 7. [Microservices Reference Pattern](#7-microservices-reference-pattern)
+8. [Ingress & AWS Load Balancer Controller: IRSA Handshake & ALB Provisioning](#8-ingress--aws-load-balancer-controller-irsa-handshake--alb-provisioning)
 
 ---
 
@@ -281,3 +282,95 @@ flowchart LR
 1. **Infrastructure**: Provision VPC, Subnets, EKS, RDS, EFS, and OIDC with **Terraform**.
 2. **Cluster Controllers**: Install CSI Drivers (`aws-ebs-csi-driver`, `aws-efs-csi-driver`) with **IRSA IAM roles** so they have permission to manipulate AWS storage.
 3. **Application Pods**: Mount EBS for fast single-instance state (`RWO`) and EFS for multi-instance shared files (`RWX`). Use IRSA to grant pods access only to the AWS services (S3, SQS, DynamoDB) they specifically need.
+
+---
+
+## 8. Ingress & AWS Load Balancer Controller: IRSA Handshake & ALB Provisioning
+
+Just like the CSI drivers need IAM permissions to manage storage, the **AWS Load Balancer Controller** needs IAM permissions to manage networking (ALBs, target groups, listeners).
+
+### Architecture Topology Diagram
+
+```mermaid
+flowchart TB
+    subgraph AWS_Cloud ["AWS Cloud (Account & IAM Layer)"]
+        subgraph IAM_Identity ["IAM & Security"]
+            OIDC_IDP["IAM OIDC Identity Provider\n(oidc.eks.us-east-1.amazonaws.com/id/...)"]
+            STS["AWS STS\n(Security Token Service)"]
+            
+            subgraph IAM_Role ["IAM Role: alb-controller-role"]
+                TrustPolicy["Trust Policy:\nAllows STS AssumeRoleWithWebIdentity\nIF sub = system:serviceaccount:\nkube-system:aws-load-balancer-controller"]
+                PermPolicy["Permission Policy:\nalb-controller-policy\n(elasticloadbalancing:*, ec2:Describe*)"]
+            end
+        end
+
+        subgraph VPC ["VPC: 10.0.0.0/16"]
+            subgraph Public_Subnets ["Public Subnets (3 AZs) - Tag: kubernetes.io/role/elb=1"]
+                ALB["AWS Application Load Balancer (ALB)\n(Dual-AZ / Multi-AZ Internet Facing)"]
+            end
+
+            subgraph Private_Subnets ["Private Subnets (3 AZs)"]
+                subgraph EKS_Cluster ["Amazon EKS Cluster (v1.31)"]
+                    subgraph Kube_System ["Namespace: kube-system"]
+                        SA["ServiceAccount:\naws-load-balancer-controller\n(annotation: role-arn)"]
+                        ControllerPod["AWS Load Balancer Controller Pod\n(Daemon watching Ingress)"]
+                    end
+
+                    subgraph Jira_NS ["Namespace: jira"]
+                        Ingress["Ingress Resource:\nclassName: alb\nscheme: internet-facing"]
+                        JiraPods["Jira Data Center Pods\n(Port 8080)"]
+                    end
+                end
+            end
+        end
+    end
+
+    %% Identity & Auth Connections
+    SA -.->|Annotates role ARN| IAM_Role
+    ControllerPod -->|1. Sends OIDC JWT Token| STS
+    STS -->|2. Validates JWT Signature with| OIDC_IDP
+    STS -->|3. Checks Trust Policy & assumes| IAM_Role
+    STS -.->|4. Returns temporary AWS credentials| ControllerPod
+
+    %% Provisioning Connection
+    Ingress -.->|Watched by| ControllerPod
+    ControllerPod -->|5. Calls AWS ELB APIs to create| ALB
+
+    %% Data Flow
+    InternetUsers(["Internet Users"]) -->|HTTPS:443 / HTTP:80| ALB
+    ALB -->|Sticky Session traffic directly to pod IPs| JiraPods
+```
+
+### The IRSA Handshake & Provisioning Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Pod as ALB Controller Pod (in kube-system)
+    participant K8s as EKS API (OIDC Issuer)
+    participant STS as AWS STS (Token Service)
+    participant IAM as AWS IAM Role
+    participant AWS_API as AWS ELB / EC2 API
+    participant ALB as AWS Application Load Balancer (in Public Subnets)
+
+    Note over Pod,K8s: Phase 1: Authentication via IRSA
+    K8s->>Pod: Injects signed OIDC JWT token into pod filesystem
+    Pod->>STS: Calls AssumeRoleWithWebIdentity (passes JWT token + Role ARN)
+    STS->>K8s: Verifies token cryptographic signature against OIDC Provider
+    STS->>IAM: Verifies ServiceAccount matches Trust Policy condition
+    IAM-->>STS: Approved!
+    STS-->>Pod: Returns temporary AWS credentials (AccessKey, SecretKey, SessionToken)
+
+    Note over Pod,ALB: Phase 2: Ingress Detection & Provisioning
+    Pod->>Pod: Watches Kubernetes API & detects new Ingress (className: alb)
+    Pod->>AWS_API: Calls DescribeSubnets (finds subnets tagged 'kubernetes.io/role/elb=1')
+    Pod->>AWS_API: Calls CreateLoadBalancer, CreateTargetGroup, CreateListener
+    AWS_API->>ALB: Provisions physical AWS ALB in public subnets
+    Pod->>K8s: Updates Ingress status with ALB DNS address
+```
+
+### Component Breakdown
+* **IAM Role (`alb_controller_role`)**: Has the Trust Policy scoped to the Controller's `ServiceAccount` and the Permission Policy granting ELB & EC2 permissions.
+* **IAM OIDC Identity Provider**: Authenticates that the request originated from the EKS cluster.
+* **AWS Load Balancer Controller**: The in-cluster brain watching for Kubernetes `Ingress` resources.
+* **AWS ALB**: The physical Layer 7 load balancer in public subnets enforcing cookie-based sticky sessions for Jira Data Center.
