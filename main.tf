@@ -48,10 +48,11 @@ module "oidc" {
 
 
 module "efs" {
-  source             = "./efs"
-  project            = var.project
-  env                = var.env
-  private_subnet_ids = module.vpc.private_subnet_ids
+  source                = "./efs"
+  project               = var.project
+  env                   = var.env
+  private_subnet_ids    = module.vpc.private_subnet_ids
+  efs_security_group_id = module.security.efs_security_group_id
 }
 
 # 1. IAM Role with OIDC Trust Policy
@@ -159,6 +160,18 @@ resource "aws_iam_role" "alb_controller_role" {
   })
 }
 
+# IAM Policy for AWS Load Balancer Controller
+resource "aws_iam_policy" "alb_controller_policy" {
+  name        = "${var.project}-${var.env}-alb-controller-policy"
+  description = "IAM policy for AWS Load Balancer Controller"
+  policy      = file("${path.module}/alb_iam_policy.json")
+}
+
+# Attach IAM Policy to Role
+resource "aws_iam_role_policy_attachment" "alb_controller_policy_attach" {
+  role       = aws_iam_role.alb_controller_role.name
+  policy_arn = aws_iam_policy.alb_controller_policy.arn
+}
 
 resource "helm_release" "alb_controller" {
   name       = "aws-load-balancer-controller"
@@ -181,6 +194,6 @@ resource "helm_release" "alb_controller" {
 
   depends_on = [
     module.eks,
-    aws_iam_role.alb_controller_role
+    aws_iam_role_policy_attachment.alb_controller_policy_attach
   ]
 }
