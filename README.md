@@ -118,9 +118,11 @@ Kubernetes pods cannot natively provision AWS disks without CSI (Container Stora
   * Enables **IRSA (IAM Roles for Service Accounts)** so that pods (e.g. EBS CSI driver, EFS CSI driver, AWS Load Balancer Controller) receive temporary scoped AWS credentials.
   * Prevents pods from inheriting full node-level IAM credentials via IMDS (least privilege).
 
-### 6. Ingress & AWS Load Balancer Controller (ALB)
+### 6. Ingress & AWS Load Balancer Controller (ALB) — Configured
 * **What it does**: Manages an external Application Load Balancer to direct traffic to Jira pods running in private subnets.
 * **Sticky Sessions**: In Jira Data Center, user sessions must stick to the same node for consecutive requests (cookie affinity) to prevent session loss or state desynchronization. The ALB handles this automatically.
+* **Implementation**: Deployed via `helm_release` (`aws-load-balancer-controller` chart from `https://aws.github.io/eks-charts`) with IRSA annotation on its `ServiceAccount` pointing to `aws_iam_role.alb_controller_role`.
+* **Helm Provider v3 Note**: The `set {}` nested block syntax was removed in Helm provider `~> 3.0`. Chart values are now supplied via `values = [ yamlencode({...}) ]`, which also handles nested keys (e.g. `serviceAccount.annotations`) more cleanly.
 
 ### 7. Subnet Discovery Tags
 Subnets must be tagged so Kubernetes controllers know how to route infrastructure:
@@ -143,7 +145,7 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 | **AWS EFS File System** | 1x EFS + 3x Mount Targets in private subnets (`efs/`) | ✅ Ready | - |
 | **EBS CSI Driver** | EKS Add-on + IRSA IAM Role for `jira-local-home` | ✅ Ready | - |
 | **EFS CSI Driver** | Kubernetes driver to mount EFS for `jira-shared-home` | ⏳ Pending | Install EFS CSI driver add-on + IAM role |
-| **Ingress & ALB** | Expose web UI with cookie sticky sessions | ⏳ Pending | Deploy AWS Load Balancer Controller |
+| **Ingress & ALB** | AWS Load Balancer Controller via Helm + IRSA role | ✅ Ready | - |
 
 > 📖 **Deep Dive Documentation**: For an in-depth explanation of how EKS IAM (OIDC/IRSA), ServiceAccounts, EBS CSI, and EFS Mount Targets work under the hood, see [EKS_STORAGE_AND_IAM_DEEP_DIVE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/EKS_STORAGE_AND_IAM_DEEP_DIVE.md).
 
@@ -154,9 +156,9 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 ```text
 jira-dc-eks-rds-setup/
 ├── README.md               # Infrastructure documentation and architecture diagram
-├── main.tf                 # Root Terraform orchestrator
+├── main.tf                 # Root Terraform orchestrator (EKS, OIDC, ALB Controller)
 ├── variables.tf            # Root input variables
-├── provider.tf             # AWS provider configuration
+├── provider.tf             # AWS, Kubernetes (exec auth), Helm provider configuration
 ├── locals.tf               # Local variables and naming conventions
 ├── env/
 │   └── dev/
@@ -178,7 +180,7 @@ jira-dc-eks-rds-setup/
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
-├── eks/                    # EKS module (Cluster, Node Group: m5.xlarge, 50GB, OIDC output)
+├── eks/                    # EKS module (Cluster, Node Group: m5.xlarge, 50GB; outputs: endpoint, CA, name)
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
@@ -214,4 +216,45 @@ terraform plan -var-file="env/dev/terraform.tfvars"
 ### 4. Deploy Infrastructure
 ```bash
 terraform apply -var-file="env/dev/terraform.tfvars"
+```
+
+---
+
+## 6. Known Issues & Fixes Applied
+
+### Helm Provider v3 — `set {}` block removed
+The `helm_release` resource no longer supports nested `set {}` blocks in Helm provider `~> 3.0`. All chart values must be supplied via the `values` argument using a YAML string.
+
+**Before (v2, broken):**
+```hcl
+set {
+  name  = "clusterName"
+  value = "my-cluster"
+}
+```
+**After (v3, correct):**
+```hcl
+values = [
+  yamlencode({
+    clusterName    = "my-cluster"
+    serviceAccount = { create = true, name = "aws-load-balancer-controller" }
+  })
+]
+```
+
+### Provider Chicken-and-Egg — EKS cluster not yet created at plan time
+The `kubernetes` provider originally used `data "aws_eks_cluster"` to fetch the cluster endpoint. This caused a hard failure during the first `terraform plan` because the cluster didn't exist yet.
+
+**Fix**: The `kubernetes` provider now references `module.eks.*` outputs (resolved post-creation) and uses an `exec` block to fetch a fresh token via the AWS CLI — avoiding static token expiry during long applies:
+
+```hcl
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+  }
+}
 ```

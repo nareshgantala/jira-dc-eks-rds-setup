@@ -95,3 +95,92 @@ resource "aws_eks_addon" "ebs_csi" {
     aws_iam_role_policy_attachment.ebs_csi_policy_attach
   ]
 }
+
+# EFS CSI Driver - IAM Role with OIDC Trust Policy
+resource "aws_iam_role" "efs_csi_role" {
+  name = "${var.project}-${var.env}-efs-csi-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Effect = "Allow"
+        Principal = {
+          Federated = module.oidc.oidc_provider_arn
+        }
+        Condition = {
+          StringEquals = {
+            "${module.oidc.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:efs-csi-controller-sa"
+            "${module.oidc.oidc_provider_url}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "efs_csi_policy_attach" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy"
+  role       = aws_iam_role.efs_csi_role.name
+}
+
+resource "aws_eks_addon" "efs_csi" {
+  cluster_name             = "${var.project}-${var.env}-eks-cluster"
+  addon_name               = "aws-efs-csi-driver"
+  service_account_role_arn = aws_iam_role.efs_csi_role.arn
+
+  depends_on = [
+    module.eks,
+    aws_iam_role_policy_attachment.efs_csi_policy_attach
+  ]
+}
+
+
+# In main.tf — IAM Role for ALB Controller
+resource "aws_iam_role" "alb_controller_role" {
+  name = "${var.project}-${var.env}-alb-controller-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Effect = "Allow"
+      Principal = {
+        Federated = module.oidc.oidc_provider_arn
+      }
+      Condition = {
+        StringEquals = {
+          "${module.oidc.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
+          "${module.oidc.oidc_provider_url}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+}
+
+
+resource "helm_release" "alb_controller" {
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+
+  values = [
+    yamlencode({
+      clusterName = "${var.project}-${var.env}-eks-cluster"
+      serviceAccount = {
+        create = true
+        name   = "aws-load-balancer-controller"
+        annotations = {
+          "eks.amazonaws.com/role-arn" = aws_iam_role.alb_controller_role.arn
+        }
+      }
+    })
+  ]
+
+  depends_on = [
+    module.eks,
+    aws_iam_role.alb_controller_role
+  ]
+}
