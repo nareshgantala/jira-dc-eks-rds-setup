@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AWS EKS & ALB Security Layer: Security Groups & NACLs Guide</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #24292f;
+      max-width: 1000px;
+      margin: 40px auto;
+      padding: 0 24px;
+      background-color: #fcfcfc;
+    }
+    h1 {
+      color: #0969da;
+      border-bottom: 2px solid #d0d7de;
+      padding-bottom: 12px;
+      font-size: 28px;
+    }
+    h2 {
+      color: #1f2328;
+      border-bottom: 1px solid #d0d7de;
+      padding-bottom: 8px;
+      margin-top: 36px;
+      font-size: 22px;
+    }
+    h3 {
+      color: #1f2328;
+      margin-top: 24px;
+      font-size: 18px;
+    }
+    .mermaid {
+      background: white;
+      border: 1px solid #e1e4e8;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+      display: flex;
+      justify-content: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      background: white;
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    th, td {
+      border: 1px solid #d0d7de;
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 14px;
+    }
+    th {
+      background-color: #f6f8fa;
+      font-weight: 600;
+    }
+    code {
+      background-color: #eff1f3;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+    }
+    pre {
+      background-color: #f6f8fa;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+    .alert-box {
+      background: #f0f7ff;
+      border-left: 4px solid #0969da;
+      padding: 14px 18px;
+      margin: 20px 0;
+      border-radius: 0 6px 6px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>AWS EKS & ALB Security Layer: Security Groups & NACLs Guide</h1>
+  <p>This guide explains the <strong>two-layer perimeter defense</strong> (Network ACLs and Security Groups) for an AWS Application Load Balancer (ALB) provisioned by the <strong>AWS Load Balancer Controller</strong> in Amazon EKS.</p>
+
+  <h2>1. Defense-in-Depth Architecture</h2>
+  <p>Traffic entering your AWS VPC passes through <strong>two distinct security filters</strong> before reaching Jira Data Center pods:</p>
+
+  <div class="mermaid">
+flowchart TD
+    Users["Internet and Corporate Users"]
+
+    subgraph VPC ["VPC 10.0.0.0/16"]
+        subgraph Public_Subnets ["Public Subnets - Subnet Tier"]
+            NACL_Pub["1. Public Subnet NACL\nStateless - Evaluated 1st"]
+            ALB_SG["2. ALB Security Group\nStateful - Virtual Firewall on ALB ENI"]
+            ALB["AWS Application Load Balancer ALB\nMulti-AZ Public"]
+            
+            NACL_Pub -->|Passes allowed ports| ALB_SG
+            ALB_SG -->|Inspects HTTP and HTTPS| ALB
+        end
+
+        subgraph Private_Subnets ["Private Subnets - EKS and Jira Tier"]
+            NACL_Priv["3. Private Subnet NACL\nStateless - Evaluated at Subnet Entry"]
+            Node_SG["4. EKS Node and Pod Security Group\nStateful - Managed by Controller"]
+            JiraPod["Jira Data Center Pod\nPort 8080"]
+
+            NACL_Priv -->|Allows 10.0.0.0/16| Node_SG
+            Node_SG -->|Allows traffic from ALB SG| JiraPod
+        end
+    end
+
+    Users -->|Request on Ports 80 and 443| NACL_Pub
+    ALB -->|Forwarded Packet on Port 8080| NACL_Priv
+  </div>
+
+  <h2>2. Security Groups vs. NACLs: Core Differences</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Feature</th>
+        <th>Network ACL (NACL)</th>
+        <th>Security Group (SG)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Operating Boundary</strong></td>
+        <td><strong>Subnet Level</strong> (Applies to all resources in subnet)</td>
+        <td><strong>Network Interface (ENI) Level</strong> (Applies to individual ALB / EC2 instance)</td>
+      </tr>
+      <tr>
+        <td><strong>State Nature</strong></td>
+        <td><strong>Stateless</strong>: Return traffic must be explicitly allowed.</td>
+        <td><strong>Stateful</strong>: Return traffic is automatically allowed.</td>
+      </tr>
+      <tr>
+        <td><strong>Rule Processing</strong></td>
+        <td><strong>Numbered Order</strong>: Evaluated top-down; stops at first match.</td>
+        <td><strong>All Rules Evaluated</strong>: Evaluated simultaneously before decision.</td>
+      </tr>
+      <tr>
+        <td><strong>Allow / Deny</strong></td>
+        <td>Supports both <strong>ALLOW</strong> and <strong>DENY</strong> rules.</td>
+        <td>Supports <strong>ALLOW</strong> rules only (implicit deny all else).</td>
+      </tr>
+      <tr>
+        <td><strong>Evaluation Order</strong></td>
+        <td>Evaluated <strong>FIRST</strong> when packet enters subnet.</td>
+        <td>Evaluated <strong>SECOND</strong> after packet passes NACL.</td>
+      </tr>
+      <tr>
+        <td><strong>Ephemeral Ports</strong></td>
+        <td><strong>Required</strong> for return connections (<code>1024-65535</code>).</td>
+        <td><strong>Not required</strong> (stateful tracking handles it).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. Layer 1: Security Groups (Stateful ENI Layer)</h2>
+  
+  <h3>Default Controller Behavior</h3>
+  <p>When you deploy an Ingress with <code>className: alb</code>, the AWS Load Balancer Controller creates a dedicated AWS Security Group and automatically updates the EKS worker node security group.</p>
+
+  <h3>Option A: Restrict Inbound IPs via Ingress Annotation</h3>
+  <pre><code>ingress:
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/inbound-cidrs: "106.51.0.0/16, 49.207.0.0/16"</code></pre>
+
+  <h3>Option B: Pre-created Terraform Security Group (Recommended)</h3>
+  <pre><code>resource "aws_security_group" "alb_sg" {
+  name        = "jira-dc-dev-alb-sg"
+  description = "Security group for Jira Data Center ALB"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}</code></pre>
+
+  <h2>4. Layer 2: Network ACLs (Stateless Subnet Layer)</h2>
+  <div class="alert-box">
+    <strong>⚠️ Ephemeral Ports Rule:</strong> Because NACLs are stateless, return traffic from the ALB back to users' browsers must be explicitly allowed on ports <code>1024 - 65535</code>, otherwise connections will hang!
+  </div>
+
+  <h3>Public Subnet NACL (ALB Tier)</h3>
+  <table>
+    <tr><th>Rule #</th><th>Direction</th><th>Protocol</th><th>Port Range</th><th>Source / Destination</th><th>Purpose</th></tr>
+    <tr><td>100</td><td>Inbound</td><td>TCP</td><td>80</td><td>0.0.0.0/0</td><td>HTTP Web Traffic</td></tr>
+    <tr><td>110</td><td>Inbound</td><td>TCP</td><td>443</td><td>0.0.0.0/0</td><td>HTTPS Secure Web Traffic</td></tr>
+    <tr><td>120</td><td>Inbound</td><td>TCP</td><td>1024 - 65535</td><td>10.0.0.0/16</td><td>Return traffic from Jira Pods in private subnets</td></tr>
+    <tr><td>100</td><td>Outbound</td><td>TCP</td><td>8080</td><td>10.0.0.0/16</td><td>Forward requests to Jira Pods in private subnets</td></tr>
+    <tr><td>110</td><td>Outbound</td><td>TCP</td><td>1024 - 65535</td><td>0.0.0.0/0</td><td>Return HTTP/HTTPS responses to client browsers</td></tr>
+  </table>
+
+  <h2>5. End-to-End Packet Flow Sequence</h2>
+  <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor User as User Browser [IP 203.0.113.10 Port 52140]
+    participant PubNACL as Public Subnet NACL
+    participant ALBSG as ALB Security Group
+    participant ALB as Application Load Balancer
+    participant PrivNACL as Private Subnet NACL
+    participant NodeSG as EKS Node Security Group
+    participant JiraPod as Jira Pod [IP 10.0.3.45 Port 8080]
+
+    Note over User,ALB: Phase 1 - Inbound to ALB
+    User->>PubNACL: SYN packet to Port 443
+    PubNACL->>ALBSG: Checked against Rule 110 Port 443 Allow - PASSED
+    ALBSG->>ALB: Checked against Ingress rules Port 443 Allow - PASSED
+    ALB-->>User: TCP 3-way handshake established stateful return
+
+    Note over ALB,JiraPod: Phase 2 - Forwarding to Jira Pod
+    ALB->>PrivNACL: Forwards request to Pod IP on Port 8080
+    PrivNACL->>NodeSG: Checked against Rule 100 Port 8080 from VPC - PASSED
+    NodeSG->>JiraPod: Checked against Controller auto-rule Port 8080 from ALB SG - PASSED
+
+    Note over JiraPod,User: Phase 3 - Returning Response
+    JiraPod->>PrivNACL: Response packet to ALB IP on Ephemeral Port
+    PrivNACL->>ALB: Checked against Outbound Rule 100 Ephemeral Allow - PASSED
+    ALB->>PubNACL: Response packet to User Browser Port 52140
+    PubNACL->>User: Checked against Outbound Rule 110 Ephemeral Allow - PASSED
+  </div>
+
+</body>
+</html>

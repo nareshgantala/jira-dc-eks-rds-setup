@@ -27,30 +27,30 @@ Traffic entering your AWS VPC must pass through **two distinct security filters*
 
 ```mermaid
 flowchart TD
-    Users(["🌐 Internet / Corporate Users"])
+    Users["Internet and Corporate Users"]
 
-    subgraph VPC ["VPC: 10.0.0.0/16"]
-        subgraph Public_Subnets ["Public Subnets (Subnet Tier)"]
-            NACL_Pub["1️⃣ Public Subnet NACL\n(Stateless - Evaluated 1st)"]
-            ALB_SG["2️⃣ ALB Security Group\n(Stateful - Virtual Firewall on ALB ENI)"]
-            ALB["AWS Application Load Balancer (ALB)\n(Dual-AZ / Multi-AZ)"]
+    subgraph VPC ["VPC 10.0.0.0/16"]
+        subgraph Public_Subnets ["Public Subnets - Subnet Tier"]
+            NACL_Pub["1. Public Subnet NACL\nStateless - Evaluated 1st"]
+            ALB_SG["2. ALB Security Group\nStateful - Virtual Firewall on ALB ENI"]
+            ALB["AWS Application Load Balancer ALB\nMulti-AZ Public"]
             
             NACL_Pub -->|Passes allowed ports| ALB_SG
-            ALB_SG -->|Inspects HTTP/HTTPS| ALB
+            ALB_SG -->|Inspects HTTP and HTTPS| ALB
         end
 
-        subgraph Private_Subnets ["Private Subnets (EKS & Jira Tier)"]
-            NACL_Priv["3️⃣ Private Subnet NACL\n(Stateless - Evaluated at Subnet Entry)"]
-            Node_SG["4️⃣ EKS Node / Pod Security Group\n(Stateful - Managed by Controller)"]
-            JiraPod["Jira Data Center Pod (Port 8080)"]
+        subgraph Private_Subnets ["Private Subnets - EKS and Jira Tier"]
+            NACL_Priv["3. Private Subnet NACL\nStateless - Evaluated at Subnet Entry"]
+            Node_SG["4. EKS Node and Pod Security Group\nStateful - Managed by Controller"]
+            JiraPod["Jira Data Center Pod\nPort 8080"]
 
             NACL_Priv -->|Allows 10.0.0.0/16| Node_SG
             Node_SG -->|Allows traffic from ALB SG| JiraPod
         end
     end
 
-    Users -->|Request Packet (Ports 80/443)| NACL_Pub
-    ALB -->|Forwarded Packet (Port 8080)| NACL_Priv
+    Users -->|Request on Ports 80 and 443| NACL_Pub
+    ALB -->|Forwarded Packet on Port 8080| NACL_Priv
 ```
 
 ---
@@ -231,30 +231,30 @@ Here is how a real user request travels through both security layers:
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as User Browser (IP: 203.0.113.10 : Port 52140)
+    actor User as User Browser [IP 203.0.113.10 Port 52140]
     participant PubNACL as Public Subnet NACL
     participant ALBSG as ALB Security Group
     participant ALB as Application Load Balancer
     participant PrivNACL as Private Subnet NACL
     participant NodeSG as EKS Node Security Group
-    participant JiraPod as Jira Pod (IP: 10.0.3.45 : Port 8080)
+    participant JiraPod as Jira Pod [IP 10.0.3.45 Port 8080]
 
-    Note over User,ALB: Phase 1: Inbound to ALB
+    Note over User,ALB: Phase 1 - Inbound to ALB
     User->>PubNACL: SYN packet to Port 443
-    PubNACL->>ALBSG: Checked against Rule 110 (Port 443 Allow) -> PASSED
-    ALBSG->>ALB: Checked against Ingress rules (Port 443 Allow) -> PASSED
-    ALB-->>User: TCP 3-way handshake established (stateful return)
+    PubNACL->>ALBSG: Checked against Rule 110 Port 443 Allow - PASSED
+    ALBSG->>ALB: Checked against Ingress rules Port 443 Allow - PASSED
+    ALB-->>User: TCP 3-way handshake established stateful return
 
-    Note over ALB,JiraPod: Phase 2: Forwarding to Jira Pod
-    ALB->>PrivNACL: Forwards request to Pod IP 10.0.3.45 on Port 8080
-    PrivNACL->>NodeSG: Checked against Rule 100 (Port 8080 from 10.0.0.0/16) -> PASSED
-    NodeSG->>JiraPod: Checked against Controller auto-rule (Port 8080 from ALB SG) -> PASSED
+    Note over ALB,JiraPod: Phase 2 - Forwarding to Jira Pod
+    ALB->>PrivNACL: Forwards request to Pod IP on Port 8080
+    PrivNACL->>NodeSG: Checked against Rule 100 Port 8080 from VPC - PASSED
+    NodeSG->>JiraPod: Checked against Controller auto-rule Port 8080 from ALB SG - PASSED
 
-    Note over JiraPod,User: Phase 3: Returning Response
-    JiraPod->>PrivNACL: Response packet to ALB IP (Port 1024-65535)
-    PrivNACL->>ALB: Checked against Outbound Rule 100 (Ephemeral Allow) -> PASSED
-    ALB->>PubNACL: Response packet to User Browser (Port 52140)
-    PubNACL->>User: Checked against Outbound Rule 110 (Ephemeral Allow) -> PASSED
+    Note over JiraPod,User: Phase 3 - Returning Response
+    JiraPod->>PrivNACL: Response packet to ALB IP on Ephemeral Port
+    PrivNACL->>ALB: Checked against Outbound Rule 100 Ephemeral Allow - PASSED
+    ALB->>PubNACL: Response packet to User Browser Port 52140
+    PubNACL->>User: Checked against Outbound Rule 110 Ephemeral Allow - PASSED
 ```
 
 ---
