@@ -297,9 +297,10 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 ```text
 jira-dc-eks-rds-setup/
 ├── README.md                              # Infrastructure documentation and architecture diagram
+├── deploy-jira.ps1                        # Automated 1-click PowerShell Jira DC deployment script
+├── destroy-lab.ps1                        # Automated 1-click PowerShell teardown script
 ├── KUBERNETES_BREAK_AND_FIX_LABS.md       # 17 Hands-on Break & Fix Chaos Engineering Labs
 ├── TEARDOWN_AND_DESTROY_GUIDE.md          # Step-by-step zero-cost teardown & destroy guide
-├── destroy-lab.ps1                        # Automated 1-click PowerShell teardown script
 ├── INFRASTRUCTURE_COMPONENTS_README.md    # One-liner architectural catalog for all components
 ├── JIRA_HELM_INSTALLATION_GUIDE.md        # Step-by-step Jira DC Helm chart installation guide
 ├── ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md # Defense-in-depth: Security Groups & NACLs guide
@@ -363,12 +364,19 @@ terraform validate
 terraform plan -var-file="env/dev/terraform.tfvars"
 ```
 
-### 4. Deploy Infrastructure
+### 4. Deploy Infrastructure (Terraform)
 ```bash
 terraform apply -var-file="env/dev/terraform.tfvars"
 ```
 
-### 5. Teardown & Clean Destruction (Zero Extra Cost)
+### 5. Deploy Jira Data Center (Automated 1-Click Script)
+Once `terraform apply` finishes, run the automated PowerShell deployment script. It extracts all database endpoints, fetches credentials from AWS Secrets Manager, configures Helm values with ALB ingress, and deploys Jira:
+
+```powershell
+.\deploy-jira.ps1
+```
+
+### 6. Teardown & Clean Destruction (Zero Extra Cost)
 To safely destroy all resources without leaving orphaned ALBs, ENIs, or EBS volumes:
 
 ```powershell

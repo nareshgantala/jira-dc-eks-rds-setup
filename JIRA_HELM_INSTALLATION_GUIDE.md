@@ -4,6 +4,16 @@ This guide provides step-by-step instructions to deploy **Atlassian Jira Data Ce
 
 ---
 
+> [!TIP]
+> **Fast-Track 1-Click Automated Deployment (Windows PowerShell)**:
+> If you want to automatically execute all the steps below (fetching Terraform outputs, retrieving DB credentials from Secrets Manager, creating K8s secrets, configuring Helm values with ALB ingress, deploying Jira, and polling for the ALB URL), simply run:
+> ```powershell
+> .\deploy-jira.ps1
+> ```
+> Follow the manual steps below if you wish to run each command step-by-step.
+
+---
+
 ## 1. Prerequisites & Environment Setup
 
 ### 1.1 Connect `kubectl` to your EKS Cluster
