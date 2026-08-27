@@ -13,56 +13,56 @@ Jira Data Center is an enterprise multi-node clustered application designed for 
 ```mermaid
 flowchart TD
     subgraph Internet ["Internet / Corporate Network"]
-        Users(["End Users & Browser Traffic"])
+        Users(["End Users and Browser Traffic"])
     end
 
-    subgraph AWS_Cloud ["AWS Cloud (VPC: 10.0.0.0/16)"]
-        subgraph Public_Subnets ["Public Subnets (3 AZs) - Tag: kubernetes.io/role/elb=1"]
+    subgraph AWS_Cloud ["AWS Cloud - VPC 10.0.0.0/16"]
+        subgraph Public_Subnets ["Public Subnets - 3 AZs - Tag: kubernetes.io/role/elb=1"]
             IGW["Internet Gateway"]
-            NAT["NAT Gateway (Outbound Internet for Nodes)"]
-            ALB["AWS Application Load Balancer (ALB)\n(Managed by AWS Load Balancer Controller)"]
+            NAT["NAT Gateway - Outbound Internet for Nodes"]
+            ALB["AWS Application Load Balancer\nManaged by AWS Load Balancer Controller"]
         end
 
-        subgraph Private_Subnets ["Private Subnets (3 AZs) - Tag: kubernetes.io/role/internal-elb=1"]
-            subgraph EKS_Cluster ["Amazon EKS Cluster (Control Plane v1.31)"]
-                OIDC["IAM OIDC Identity Provider (IRSA)\n[Module: oidc]"]
+        subgraph Private_Subnets ["Private Subnets - 3 AZs - Tag: kubernetes.io/role/internal-elb=1"]
+            subgraph EKS_Cluster ["Amazon EKS Cluster - Control Plane v1.31"]
+                OIDC["IAM OIDC Identity Provider - IRSA\nModule: oidc"]
 
-                subgraph EKS_Nodes ["EKS Managed Node Group (2x m5.xlarge - 4 vCPU, 16 GB RAM, 50 GB Disk)"]
+                subgraph EKS_Nodes ["EKS Managed Node Group - 2x m5.xlarge - 4 vCPU, 16 GB RAM, 50 GB Disk"]
                     subgraph Pod1 ["Jira DC Pod 1"]
-                        JiraCore1["Jira Application Core\n(JVM Heap: 4-8 GB)"]
-                        EBS1[("Local Home (EBS gp3)\nReadWriteOnce (RWO)\nCaches, Search Index, Logs")]
+                        JiraCore1["Jira Application Core\nJVM Heap: 4-8 GB"]
+                        EBS1[("Local Home - EBS gp3\nReadWriteOnce RWO\nCaches, Search Index, Logs")]
                         JiraCore1 --- EBS1
                     end
 
                     subgraph Pod2 ["Jira DC Pod 2"]
-                        JiraCore2["Jira Application Core\n(JVM Heap: 4-8 GB)"]
-                        EBS2[("Local Home (EBS gp3)\nReadWriteOnce (RWO)\nCaches, Search Index, Logs")]
+                        JiraCore2["Jira Application Core\nJVM Heap: 4-8 GB"]
+                        EBS2[("Local Home - EBS gp3\nReadWriteOnce RWO\nCaches, Search Index, Logs")]
                         JiraCore2 --- EBS2
                     end
                 end
             end
 
             subgraph Storage_Backend ["Persistent Backend Services"]
-                RDS[("Amazon Aurora Serverless v2 PostgreSQL v16.1\n(Issues, Workflows, Users, Settings)\n[Security Group: Port 5432 from VPC]")]
-                EFS[("Amazon EFS Shared File System\n(1x Regional EFS + 3x Mount Targets in Private Subnets)\nShared Home: ReadWriteMany (RWX)\n(Attachments, Plugins, Avatars, Cluster Locks)")]
+                RDS[("Amazon Aurora Serverless v2\nPostgreSQL v16.1\nIssues, Workflows, Users, Settings\nSecurity Group: Port 5432 from VPC")]
+                EFS[("Amazon EFS Shared File System\n1x Regional EFS + 3x Mount Targets\nShared Home: ReadWriteMany RWX\nAttachments, Plugins, Avatars, Cluster Locks")]
             end
         end
     end
 
-    Users -->|HTTPS / Port 443| ALB
+    Users -->|HTTPS Port 443| ALB
     IGW --> NAT
-    NAT -.->|Outbound updates/pulls| EKS_Nodes
+    NAT -.->|Outbound updates and pulls| EKS_Nodes
 
-    ALB -->|Sticky Sessions: Cookie Affinity| JiraCore1
-    ALB -->|Sticky Sessions: Cookie Affinity| JiraCore2
+    ALB -->|Sticky Sessions - Cookie Affinity| JiraCore1
+    ALB -->|Sticky Sessions - Cookie Affinity| JiraCore2
 
-    JiraCore1 -->|SQL / Port 5432| RDS
-    JiraCore2 -->|SQL / Port 5432| RDS
+    JiraCore1 -->|SQL Port 5432| RDS
+    JiraCore2 -->|SQL Port 5432| RDS
 
-    JiraCore1 -->|NFS / Port 2049| EFS
-    JiraCore2 -->|NFS / Port 2049| EFS
+    JiraCore1 -->|NFS Port 2049| EFS
+    JiraCore2 -->|NFS Port 2049| EFS
 
-    OIDC -.->|Temporary IAM Credentials (IRSA)| EKS_Nodes
+    OIDC -.->|Temporary IAM Credentials - IRSA| EKS_Nodes
 ```
 
 ---
