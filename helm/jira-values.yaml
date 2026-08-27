@@ -53,6 +53,8 @@ volumes:
 ingress:
   create: true
   className: "alb"
+  https: false
+  host: "k8s-jira-jira-2521efea0a-496804775.us-east-1.elb.amazonaws.com"
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -64,5 +66,4 @@ ingress:
     alb.ingress.kubernetes.io/affinity-mode: persistent
     alb.ingress.kubernetes.io/session-cookie-name: AWSALB
     alb.ingress.kubernetes.io/session-cookie-expires: "86400"
-  host: ""
   path: "/"

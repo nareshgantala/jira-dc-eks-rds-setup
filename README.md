@@ -297,6 +297,7 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 ```text
 jira-dc-eks-rds-setup/
 ├── README.md                              # Infrastructure documentation and architecture diagram
+├── KUBERNETES_BREAK_AND_FIX_LABS.md       # 17 Hands-on Break & Fix Chaos Engineering Labs
 ├── TEARDOWN_AND_DESTROY_GUIDE.md          # Step-by-step zero-cost teardown & destroy guide
 ├── destroy-lab.ps1                        # Automated 1-click PowerShell teardown script
 ├── INFRASTRUCTURE_COMPONENTS_README.md    # One-liner architectural catalog for all components
@@ -497,5 +498,23 @@ After Jira started running (`1/1 Ready`), accessing the ALB URL returned `503 Se
   alb.ingress.kubernetes.io/success-codes: "200,302"
   ```
   This points the ALB health check to Jira's dedicated `/status` endpoint (which returns `200`) and permits `302` redirects, immediately transitioning the target to `healthy`.
+
+### Jira Setup Wizard — 403 Forbidden (XSRF Protocol Mismatch)
+During the initial web setup wizard (`SetupApplicationProperties.jspa`), clicking "Next" resulted in an immediate `Forbidden (403)` error:
+```text
+XSRF checks failed for action 'com.atlassian.jira.web.action.setup.SetupApplicationProperties!execute' (recoverable: false, token present: true)
+```
+
+* **Root Cause**: The official Atlassian Helm chart defaults to `ingress.https: true`. This causes Tomcat to inject `ATL_TOMCAT_SCHEME: https` and `ATL_TOMCAT_SECURE: true`. Because the lab's ALB listener was deployed on plain HTTP (port 80), the browser submits forms over `http://`, but Jira expects `https://`. Jira's Cross-Site Request Forgery (XSRF) validation flags this protocol mismatch as an attack and blocks the request with HTTP 403.
+* **Fix**: Configured `https: false` and explicitly set `host` in [helm/jira-values.yaml](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/helm/jira-values.yaml):
+  ```yaml
+  ingress:
+    create: true
+    className: "alb"
+    https: false
+    host: "k8s-jira-jira-2521efea0a-496804775.us-east-1.elb.amazonaws.com"
+  ```
+  This configures Tomcat's proxy settings to match the incoming HTTP scheme, port 80, and ALB hostname, eliminating the XSRF mismatch.
+
 
 

@@ -192,6 +192,8 @@ volumes:
 ingress:
   create: true
   className: "alb"
+  https: false  # REQUIRED if accessing over plain HTTP (prevents 403 Forbidden XSRF mismatch)
+  host: "<REPLACE_WITH_ALB_DNS_NAME>"
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -204,7 +206,6 @@ ingress:
     alb.ingress.kubernetes.io/affinity-mode: persistent
     alb.ingress.kubernetes.io/session-cookie-name: AWSALB
     alb.ingress.kubernetes.io/session-cookie-expires: "86400"
-  host: ""
   path: "/"
 ```
 
@@ -268,6 +269,7 @@ Open this address in your web browser to access the **Jira Data Center Setup Wiz
 | Symptom | Likely Cause | Resolution |
 |---|---|---|
 | Pod stuck in `Init:0/1` (`Failed to resolve fs-xxxx.efs...`) | VPC DNS hostnames disabled or EFS CSI node SA not in trust policy | Ensure `enable_dns_hostnames = true` in `vpc/` and `efs_csi_role` trust policy permits `system:serviceaccount:kube-system:efs-csi-*`. |
+| `Forbidden (403)` / `XSRF checks failed` on setup wizard | Scheme mismatch: client connects via HTTP (port 80), but Helm chart defaults to `ingress.https: true` | Set `ingress.https: false` and `ingress.host: "<ALB_DNS_NAME>"` in `jira-values.yaml` so Tomcat generates HTTP proxy scheme and ports. |
 | ALB returns `503 Service Temporarily Unavailable` (`ResponseCodeMismatch [302]`) | ALB health check querying `/` expecting `200`, but Jira returns `302` redirect | Add `alb.ingress.kubernetes.io/healthcheck-path: /status` and `alb.ingress.kubernetes.io/success-codes: "200,302"` to ingress annotations in `jira-values.yaml`. |
 | Helm fails with `incomplete UTF-16 character` | `jira-values.yaml` was saved in UTF-16LE encoding (PowerShell default) | Re-save the file with standard UTF-8 encoding. |
 | Pod stuck in `ContainerCreating` on volume mount | EFS Security Group not allowing port 2049 | Verify EFS mount targets have `efs-sg` attached (already configured in Terraform). |
