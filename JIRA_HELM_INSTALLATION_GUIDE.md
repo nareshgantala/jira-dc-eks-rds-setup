@@ -32,16 +32,29 @@ Make sure you see:
 
 ## 2. Retrieve Database Credentials
 
-Terraform manages your Aurora PostgreSQL master password securely inside **AWS Secrets Manager**. Retrieve the generated password using the AWS CLI:
+Terraform manages your Aurora PostgreSQL master password securely inside **AWS Secrets Manager**. Retrieve the generated password using either PowerShell (Windows) or Bash (macOS/Linux):
 
+### Option A: Windows PowerShell
+```powershell
+# 1. Get the secret ARN from Terraform output
+$SECRET_ARN = terraform output -raw rds_master_user_secret_arn
+
+# 2. Fetch the password from AWS Secrets Manager using native ConvertFrom-Json
+$DB_PASSWORD = (aws secretsmanager get-secret-value --secret-id $SECRET_ARN --query SecretString --output text | ConvertFrom-Json).password
+
+# 3. Verify retrieval
+Write-Host "Retrieved DB password successfully"
+```
+
+### Option B: Linux / macOS (Bash)
 ```bash
 # 1. Get the secret ARN from Terraform output
 SECRET_ARN=$(terraform output -raw rds_master_user_secret_arn)
 
-# 2. Fetch the password from AWS Secrets Manager
+# 2. Fetch the password from AWS Secrets Manager using jq
 DB_PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" --query SecretString --output text | jq -r .password)
 
-# Print to verify (or copy it for the next step)
+# 3. Verify retrieval
 echo "Retrieved DB password successfully"
 ```
 
@@ -55,6 +68,16 @@ kubectl create namespace jira
 ```
 
 Create a Kubernetes Secret storing your database credentials so they are never hard-coded in plain text:
+
+### Windows PowerShell:
+```powershell
+kubectl create secret generic jira-db-secret `
+  --namespace jira `
+  --from-literal=username=postgres `
+  --from-literal=password=$DB_PASSWORD
+```
+
+### Linux / macOS (Bash):
 ```bash
 kubectl create secret generic jira-db-secret \
   --namespace jira \
