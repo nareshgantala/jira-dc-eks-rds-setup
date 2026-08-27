@@ -2,7 +2,7 @@ resource "aws_rds_cluster" "jira_dc_rds_cluster" {
   cluster_identifier          = "jira-dc-rds-cluster"
   engine                      = "aurora-postgresql"
   engine_mode                 = "provisioned"
-  engine_version              = "16.1"
+  engine_version              = "16.8"
   database_name               = "jiradb"
   master_username             = "postgres"
   db_subnet_group_name        = var.jira_dc_db_subnet_group_id

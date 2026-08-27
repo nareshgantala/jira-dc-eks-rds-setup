@@ -64,14 +64,40 @@ kubectl create secret generic jira-db-secret \
 
 ---
 
-## 4. Setup EFS StorageClass for Shared Home
+## 4. Verify EFS StorageClass for Shared Home
 
 Jira Data Center requires **Shared Home** to run across all cluster pods using `ReadWriteMany` (RWX) volume mounts.
 
-Deploy the AWS EFS StorageClass into your cluster:
+> [!NOTE]
+> **Automatically Deployed by Terraform**: The `efs-sc` StorageClass is now managed directly by Terraform (`kubernetes_storage_class_v1.efs_sc` in [main.tf](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/main.tf)) with your EFS File System ID automatically injected. You do **not** need to create or apply YAML manually!
 
+### Verify the StorageClass in your cluster:
+```bash
+kubectl get sc efs-sc
+```
+Expected output:
+```text
+NAME     PROVISIONER       RECLAIMPOLICY   VOLUMEBINDINGMODE   ALLOWVOLUMEEXPANSION   AGE
+efs-sc   efs.csi.aws.com   Delete          Immediate           true                   5m
+```
+
+### Inspect the StorageClass parameters:
+```bash
+kubectl describe sc efs-sc
+```
+Verify that `fileSystemId` points to your active EFS volume:
+```text
+Name:                  efs-sc
+Provisioner:           efs.csi.aws.com
+Parameters:            directoryPerms=700,fileSystemId=fs-09205c11977baaf08,provisioningMode=efs-ap
+AllowVolumeExpansion:  True
+ReclaimPolicy:         Delete
+VolumeBindingMode:     Immediate
+```
+
+*(Reference only: Under the hood, Terraform creates the equivalent of:)*
 ```yaml
-# efs-storageclass.yaml
+# Equivalent manifest managed declaratively in main.tf:
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -79,18 +105,8 @@ metadata:
 provisioner: efs.csi.aws.com
 parameters:
   provisioningMode: efs-ap
-  fileSystemId: <REPLACE_WITH_EFS_FILE_SYSTEM_ID>
+  fileSystemId: <DYNAMICALLY_INJECTED_BY_TERRAFORM>
   directoryPerms: "700"
-```
-
-> **Tip:** You can obtain your EFS ID by running:
-> ```bash
-> terraform output -raw efs_file_system_id
-> ```
-
-Apply the StorageClass:
-```bash
-kubectl apply -f efs-storageclass.yaml
 ```
 
 ---

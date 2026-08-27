@@ -187,18 +187,39 @@ You asked: *"We are creating EFS mount points in Terraform, but where do we actu
 
 ### Where is EFS Referenced? (The 3 Connection Steps)
 
-#### Step 1: In Terraform (Outputs)
+#### Step 1: In Terraform EFS Module (Outputs)
 Terraform outputs the unique AWS EFS File System ID in [efs/output.tf](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/efs/output.tf):
 ```hcl
 output "efs_file_system_id" {
-  value = aws_efs_file_system.jira_dc_efs.id # e.g. fs-0123456789abcdef0
+  value = aws_efs_file_system.jira_dc_efs.id # e.g. fs-09205c11977baaf08
 }
 ```
 
-#### Step 2: In Kubernetes (StorageClass Definition)
-After Terraform finishes, you apply a Kubernetes `StorageClass` YAML that references that File System ID:
+#### Step 2: In Root Terraform (`main.tf` — Automated StorageClass)
+Rather than manually creating and applying a YAML manifest with copy-pasted IDs, Terraform natively manages the `StorageClass` via `kubernetes_storage_class_v1`:
+```hcl
+resource "kubernetes_storage_class_v1" "efs_sc" {
+  metadata {
+    name = "efs-sc"
+  }
+
+  storage_provisioner = "efs.csi.aws.com"
+
+  parameters = {
+    provisioningMode = "efs-ap"
+    fileSystemId     = module.efs.efs_file_system_id  # <--- Dynamically injected!
+    directoryPerms   = "700"
+  }
+
+  depends_on = [
+    module.eks,
+    module.efs
+  ]
+}
+```
+
+Under the hood, this generates the exact Kubernetes object:
 ```yaml
-# efs-storageclass.yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -206,7 +227,7 @@ metadata:
 provisioner: efs.csi.aws.com
 parameters:
   provisioningMode: efs-ap
-  fileSystemId: fs-0123456789abcdef0  # <--- HERE IS WHERE EFS IS REFERENCED!
+  fileSystemId: fs-09205c11977baaf08
   directoryPerms: "700"
 ```
 

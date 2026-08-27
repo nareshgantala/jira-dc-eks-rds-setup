@@ -184,6 +184,8 @@ resource "helm_release" "alb_controller" {
   values = [
     yamlencode({
       clusterName = "${var.project}-${var.env}-eks-cluster"
+      region      = "us-east-1"
+      vpcId       = module.vpc.vpc_id
       serviceAccount = {
         create = true
         name   = "aws-load-balancer-controller"
@@ -197,5 +199,25 @@ resource "helm_release" "alb_controller" {
   depends_on = [
     module.eks,
     aws_iam_role_policy_attachment.alb_controller_policy_attach
+  ]
+}
+
+
+resource "kubernetes_storage_class_v1" "efs_sc" {
+  metadata {
+    name = "efs-sc"
+  }
+
+  storage_provisioner = "efs.csi.aws.com"
+
+  parameters = {
+    provisioningMode = "efs-ap"
+    fileSystemId     = module.efs.efs_file_system_id
+    directoryPerms   = "700"
+  }
+
+  depends_on = [
+    module.eks,
+    module.efs
   ]
 }

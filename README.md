@@ -43,7 +43,7 @@ flowchart TD
             end
 
             subgraph Storage_Backend ["Persistent Backend Services"]
-                RDS[("Amazon Aurora Serverless v2\nPostgreSQL v16.1\nIssues, Workflows, Users, Settings\nSecurity Group: Port 5432 from VPC")]
+                RDS[("Amazon Aurora Serverless v2\nPostgreSQL v16.8\nIssues, Workflows, Users, Settings\nSecurity Group: Port 5432 from VPC")]
                 EFS[("Amazon EFS Shared File System\n1x Regional EFS + 3x Mount Targets\nShared Home: ReadWriteMany RWX\nAttachments, Plugins, Avatars, Cluster Locks")]
             end
         end
@@ -76,7 +76,7 @@ flowchart TD
   * `m5.xlarge` provides **4 vCPUs and 16 GiB RAM**, offering ample capacity for Jira's Lucene indexing, caches, and multiple cluster nodes.
 
 ### 2. Database: Amazon Aurora Serverless v2 PostgreSQL — Configured
-* **Configuration**: PostgreSQL engine `16.1`, Serverless v2 capacity (`min: 0.5 ACU`, `max: 1.0 ACU`), `manage_master_user_password = true` (AWS Secrets Manager integration), and dedicated DB Subnet Group across private subnets.
+* **Configuration**: PostgreSQL engine `16.8`, Serverless v2 capacity (`min: 0.5 ACU`, `max: 1.0 ACU`), `manage_master_user_password = true` (AWS Secrets Manager integration), and dedicated DB Subnet Group across private subnets.
 * **Why it matters**:
   * Jira Data Center does not include an embedded database for production; all cluster nodes connect to the same central database.
   * Aurora Serverless v2 instantly scales compute capacity up and down without downtime and provides automated Multi-AZ replication.
@@ -102,6 +102,15 @@ Jira Data Center strictly separates local instance data from cluster-shared data
 * **Why one mount target per AZ?**:
   * AWS enforces at most one mount target per AZ.
   * Worker nodes mount EFS locally in their own AZ over NFS (port 2049), ensuring ultra-low latency and avoiding cross-AZ data transfer costs.
+
+#### Kubernetes EFS StorageClass (`kubernetes_storage_class_v1.efs_sc`) — Configured in Terraform
+* **Resource**: `kubernetes_storage_class_v1.efs_sc` (StorageClass name: `efs-sc`).
+* **Provisioner**: `efs.csi.aws.com` (provisioning mode: `efs-ap`, POSIX directory permissions: `"700"`).
+* **Dynamic Linking**: Automatically injects `module.efs.efs_file_system_id` directly into the StorageClass parameters in Terraform.
+* **Why it matters**:
+  * Eliminates error-prone manual steps (no copy-pasting EFS file system IDs into YAML files and running `kubectl apply`).
+  * Enforces GitOps single source of truth: the moment `terraform apply` finishes, the cluster is instantly ready for Jira Data Center's shared home volume claim (`RWX`).
+  * Handles cleanup cleanly on `terraform destroy`.
 
 #### What are CSI Drivers & Why Do They Need IAM Roles?
 Kubernetes pods cannot natively create or mount AWS disks without CSI (Container Storage Interface) drivers. These drivers run as controller pods inside `kube-system` and require **IRSA IAM Roles** to call AWS APIs on your behalf:
@@ -263,15 +272,18 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 | **VPC & Networking** | 3 Public Subnets, 3 Private Subnets, IGW, NAT GW + ALB Tags | ✅ Ready | - |
 | **DB Subnet Group** | DB Subnet Group across private subnets | ✅ Ready | - |
 | **Database Security** | Security group allowing TCP 5432 from VPC | ✅ Ready | - |
-| **Aurora PostgreSQL** | Aurora Serverless v2 PostgreSQL v16.1 cluster | ✅ Ready | - |
+| **Aurora PostgreSQL** | Aurora Serverless v2 PostgreSQL v16.8 cluster | ✅ Ready | - |
 | **EKS Control Plane** | AWS EKS Cluster v1.31 | ✅ Ready | - |
 | **Node Group Sizing** | 2x `m5.xlarge` (16 GB RAM, 50 GB disk) | ✅ Ready | - |
 | **EKS OIDC Provider** | IAM OIDC provider for IRSA (`oidc/` module) | ✅ Ready | - |
 | **AWS EFS File System** | 1x EFS + 3x Mount Targets in private subnets (`efs/`) | ✅ Ready | - |
+| **EFS StorageClass** | `efs-sc` deployed via Terraform (`kubernetes_storage_class_v1`) | ✅ Ready | - |
 | **EBS CSI Driver** | EKS Add-on + IRSA IAM Role for `jira-local-home` | ✅ Ready | - |
 | **EFS CSI Driver** | EKS Add-on + IRSA IAM Role + EFS SG for `jira-shared-home` | ✅ Ready | - |
 | **Ingress & ALB** | AWS Load Balancer Controller via Helm + IRSA role & policy | ✅ Ready | - |
 
+> 📑 **One-Liner Infrastructure Catalog**: For a single, complete cheat sheet explaining every component created in this architecture with a crisp one-line definition, see [INFRASTRUCTURE_COMPONENTS_README.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/INFRASTRUCTURE_COMPONENTS_README.md).
+> 
 > 🚀 **Jira Installation Guide**: For exact instructions, database connection details, and `values.yaml` configuration to install the Jira Data Center Helm chart, see [JIRA_HELM_INSTALLATION_GUIDE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/JIRA_HELM_INSTALLATION_GUIDE.md).
 >
 > 🔒 **ALB Security Groups & NACLs Guide**: For an in-depth breakdown of the two-layer perimeter defense (NACLs vs Security Groups) and ephemeral port rules, see [ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md).
@@ -285,10 +297,11 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 ```text
 jira-dc-eks-rds-setup/
 ├── README.md                              # Infrastructure documentation and architecture diagram
+├── INFRASTRUCTURE_COMPONENTS_README.md    # One-liner architectural catalog for all components
 ├── JIRA_HELM_INSTALLATION_GUIDE.md        # Step-by-step Jira DC Helm chart installation guide
 ├── ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md # Defense-in-depth: Security Groups & NACLs guide
 ├── EKS_STORAGE_AND_IAM_DEEP_DIVE.md       # Detailed technical reference for IAM, EBS, and EFS
-├── main.tf                                # Root Terraform orchestrator (EKS, Add-ons, ALB Controller)
+├── main.tf                                # Root Terraform orchestrator (EKS, Add-ons, ALB Controller, efs-sc)
 ├── output.tf                              # Root outputs (endpoints, cluster name, secrets, EFS ID)
 ├── variables.tf                           # Root input variables
 ├── provider.tf                            # AWS, Kubernetes (exec auth), Helm provider configuration
@@ -310,7 +323,7 @@ jira-dc-eks-rds-setup/
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
-├── rds/                    # Database module (Aurora Serverless v2 PostgreSQL v16.1)
+├── rds/                    # Database module (Aurora Serverless v2 PostgreSQL v16.8)
 │   ├── main.tf
 │   ├── variables.tf
 │   └── output.tf
@@ -392,3 +405,34 @@ provider "kubernetes" {
   }
 }
 ```
+
+### AWS Load Balancer Controller — CrashLoopBackOff on IMDSv2 Hop Limit
+The AWS Load Balancer Controller pods initially failed with `CrashLoopBackOff` and logged:
+```text
+unable to initialize AWS cloud: failed to get VPC ID: failed to fetch VPC ID from instance metadata: 
+error in fetching vpc id through ec2 metadata: get mac metadata: operation error ec2imds: GetMetadata, canceled, context deadline exceeded
+```
+
+* **Root Cause**: EKS managed node groups default to EC2 Instance Metadata Service (IMDSv2) hop limit `http_put_response_hop_limit = 1`. Because containerized pods reside in a container network namespace, packets to `169.254.169.254` require a hop limit of at least `2`. Lacking explicit parameters, the controller attempts to discover its region and VPC ID via IMDS and times out.
+* **Fix**: Explicitly supply `region` and `vpcId` in the `helm_release.alb_controller` values in `main.tf`:
+```hcl
+values = [
+  yamlencode({
+    clusterName = "${var.project}-${var.env}-eks-cluster"
+    region      = "us-east-1"
+    vpcId       = module.vpc.vpc_id
+    serviceAccount = {
+      create = true
+      name   = "aws-load-balancer-controller"
+      annotations = {
+        "eks.amazonaws.com/role-arn" = aws_iam_role.alb_controller_role.arn
+      }
+    }
+  })
+]
+```
+
+### Declarative EFS StorageClass Deployment via Terraform
+* **Before**: Users had to run `terraform output -raw efs_file_system_id`, manually edit `efs-storageclass.yaml`, and run `kubectl apply -f efs-storageclass.yaml`.
+* **Fix**: Provisioned natively using Terraform's `kubernetes_storage_class_v1` resource, dynamically passing `module.efs.efs_file_system_id`. This unifies cloud and in-cluster resources under a single `terraform apply`.
+

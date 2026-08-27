@@ -36,7 +36,16 @@ provider "kubernetes" {
 }
 
 # Configure the Helm Provider
-# Note: In Helm provider v3+, the nested `kubernetes {}` block was removed.
-# Helm automatically uses the kubernetes provider configuration.
+# Provide Kubernetes cluster connection details to Helm so it can deploy charts
 provider "helm" {
+  kubernetes = {
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
+    exec = {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+    }
+  }
 }
+
