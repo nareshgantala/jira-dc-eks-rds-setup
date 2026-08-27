@@ -274,6 +274,8 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 
 > 🚀 **Jira Installation Guide**: For exact instructions, database connection details, and `values.yaml` configuration to install the Jira Data Center Helm chart, see [JIRA_HELM_INSTALLATION_GUIDE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/JIRA_HELM_INSTALLATION_GUIDE.md).
 >
+> 🔒 **ALB Security Groups & NACLs Guide**: For an in-depth breakdown of the two-layer perimeter defense (NACLs vs Security Groups) and ephemeral port rules, see [ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md).
+>
 > 📖 **Deep Dive Documentation**: For an in-depth explanation of how EKS IAM (OIDC/IRSA), ServiceAccounts, EBS CSI, and EFS Mount Targets work under the hood, see [EKS_STORAGE_AND_IAM_DEEP_DIVE.md](file:///e:/GitRepos/interview/jira-dc-eks-rds-setup/EKS_STORAGE_AND_IAM_DEEP_DIVE.md).
 
 ---
@@ -282,13 +284,15 @@ Subnets must be tagged so Kubernetes controllers know how to route infrastructur
 
 ```text
 jira-dc-eks-rds-setup/
-├── README.md                       # Infrastructure documentation and architecture diagram
-├── JIRA_HELM_INSTALLATION_GUIDE.md # Step-by-step Jira DC Helm chart installation guide
-├── main.tf                         # Root Terraform orchestrator (EKS, Add-ons, ALB Controller)
-├── output.tf                       # Root outputs (endpoints, cluster name, secrets, EFS ID)
-├── variables.tf                    # Root input variables
-├── provider.tf                     # AWS, Kubernetes (exec auth), Helm provider configuration
-├── alb_iam_policy.json             # Official AWS Load Balancer Controller IAM policy
+├── README.md                              # Infrastructure documentation and architecture diagram
+├── JIRA_HELM_INSTALLATION_GUIDE.md        # Step-by-step Jira DC Helm chart installation guide
+├── ALB_SECURITY_GROUPS_AND_NACLS_GUIDE.md # Defense-in-depth: Security Groups & NACLs guide
+├── EKS_STORAGE_AND_IAM_DEEP_DIVE.md       # Detailed technical reference for IAM, EBS, and EFS
+├── main.tf                                # Root Terraform orchestrator (EKS, Add-ons, ALB Controller)
+├── output.tf                              # Root outputs (endpoints, cluster name, secrets, EFS ID)
+├── variables.tf                           # Root input variables
+├── provider.tf                            # AWS, Kubernetes (exec auth), Helm provider configuration
+├── alb_iam_policy.json                    # Official AWS Load Balancer Controller IAM policy
 ├── locals.tf                       # Local variables and naming conventions
 ├── env/
 │   └── dev/
