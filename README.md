@@ -103,10 +103,43 @@ Jira Data Center strictly separates local instance data from cluster-shared data
   * AWS enforces at most one mount target per AZ.
   * Worker nodes mount EFS locally in their own AZ over NFS (port 2049), ensuring ultra-low latency and avoiding cross-AZ data transfer costs.
 
-#### What are CSI Drivers?
-Kubernetes pods cannot natively provision AWS disks without CSI (Container Storage Interface) "drivers":
-* **AWS EBS CSI Driver**: Automatically provisions and attaches EBS volumes when Jira requests local storage.
-* **AWS EFS CSI Driver**: Automatically mounts the AWS EFS file system when Jira requests `ReadWriteMany` shared storage.
+#### What are CSI Drivers & Why Do They Need IAM Roles?
+Kubernetes pods cannot natively create or mount AWS disks without CSI (Container Storage Interface) drivers. These drivers run as controller pods inside `kube-system` and require **IRSA IAM Roles** to call AWS APIs on your behalf:
+* **AWS EBS CSI Driver**: Uses `aws_iam_role.ebs_csi_role` (`AmazonEBSCSIDriverPolicy`) to call `ec2:CreateVolume` and `ec2:AttachVolume` for Jira's local block storage (`ReadWriteOnce`).
+* **AWS EFS CSI Driver**: Uses `aws_iam_role.efs_csi_role` (`AmazonEFSCSIDriverPolicy`) to call `elasticfilesystem:ClientMount` and `elasticfilesystem:ClientWrite` to mount shared NFS storage (`ReadWriteMany`).
+
+```mermaid
+flowchart LR
+    subgraph IAM ["AWS IAM (IRSA)"]
+        EBS_Role["IAM Role: ebs-csi-role\nAmazonEBSCSIDriverPolicy"]
+        EFS_Role["IAM Role: efs-csi-role\nAmazonEFSCSIDriverPolicy"]
+    end
+
+    subgraph K8s ["EKS Controllers (kube-system)"]
+        EBS_CSI["EBS CSI Controller Pod\n(ebs-csi-controller-sa)"]
+        EFS_CSI["EFS CSI Controller Pod\n(efs-csi-controller-sa)"]
+    end
+
+    subgraph AWS_Storage ["AWS Storage Backends"]
+        EBS[("AWS EBS gp3 Volume\nReadWriteOnce (RWO)")]
+        EFS[("Amazon EFS File System\nReadWriteMany (RWX)")]
+    end
+
+    subgraph Jira ["Jira DC Pods"]
+        Pod1["Jira Pod 1"]
+        Pod2["Jira Pod 2"]
+    end
+
+    EBS_CSI -.->|Assumes via OIDC| EBS_Role
+    EFS_CSI -.->|Assumes via OIDC| EFS_Role
+
+    EBS_CSI ==>|Calls ec2:CreateVolume & Attach| EBS
+    EFS_CSI ==>|Calls efs:ClientMount| EFS
+
+    EBS ---|Local Home: Indexes & Logs| Pod1
+    EFS -.-|Shared Home: NFS Mount| Pod1
+    EFS -.-|Shared Home: NFS Mount| Pod2
+```
 
 ### 5. IAM OIDC Provider (`oidc/` module) — Configured
 * **Configuration**: 

@@ -11,8 +11,9 @@ This comprehensive technical guide explains how **Kubernetes Storage** and **AWS
 4. [EKS Add-ons: What is the EBS CSI Driver Doing?](#4-eks-add-ons-what-is-the-ebs-csi-driver-doing)
 5. [Connecting AWS EFS to Kubernetes: Where Are Mount Points Referenced?](#5-connecting-aws-efs-to-kubernetes-where-are-mount-points-referenced)
 6. [Architectural Comparison: EBS (Block/RWO) vs. EFS (Network/RWX)](#6-architectural-comparison-ebs-blockrwo-vs-efs-networkrwx)
-7. [Microservices Reference Pattern](#7-microservices-reference-pattern)
-8. [Ingress & AWS Load Balancer Controller: IRSA Handshake & ALB Provisioning](#8-ingress--aws-load-balancer-controller-irsa-handshake--alb-provisioning)
+7. [IAM Roles Importance in EBS & EFS: Security & Architecture](#7-iam-roles-importance-in-ebs--efs-security--architecture)
+8. [Microservices Reference Pattern](#8-microservices-reference-pattern)
+9. [Ingress & AWS Load Balancer Controller: IRSA Handshake & ALB Provisioning](#9-ingress--aws-load-balancer-controller-irsa-handshake--alb-provisioning)
 
 ---
 
@@ -248,7 +249,125 @@ The **AWS EFS CSI Driver** automatically queries AWS:
 
 ---
 
-## 7. Microservices Reference Pattern
+## 7. IAM Roles Importance in EBS & EFS: Security & Architecture
+
+Kubernetes pods live inside a virtual container sandbox. By default, **Kubernetes has zero authority to create or attach AWS infrastructure**.
+
+### Architecture: How CSI Drivers Use IAM Roles
+
+```mermaid
+flowchart TB
+    subgraph AWS_IAM ["AWS IAM & Security Layer"]
+        OIDC["EKS OIDC Identity Provider\n(oidc.eks.us-east-1.amazonaws.com/id/...)"]
+        
+        subgraph IAM_Roles ["Dedicated IRSA IAM Roles"]
+            EBS_Role["IAM Role: ebs-csi-role\nPolicy: AmazonEBSCSIDriverPolicy\n(ec2:CreateVolume, ec2:AttachVolume)"]
+            EFS_Role["IAM Role: efs-csi-role\nPolicy: AmazonEFSCSIDriverPolicy\n(elasticfilesystem:ClientMount, ClientWrite)"]
+        end
+    end
+
+    subgraph AWS_Storage ["AWS Managed Storage Services"]
+        EBS_Vol[("Amazon EBS Volume (gp3)\nBlock Storage - Fast I/O\nAccess: ReadWriteOnce (RWO)")]
+        EFS_FS[("Amazon EFS File System\nNFS Network Storage\nAccess: ReadWriteMany (RWX)")]
+    end
+
+    subgraph EKS_Cluster ["Amazon EKS Cluster"]
+        subgraph Kube_System ["Namespace: kube-system (CSI Control Plane)"]
+            subgraph EBS_CSI ["AWS EBS CSI Controller"]
+                SA_EBS["ServiceAccount: ebs-csi-controller-sa\n(annotation: ebs-csi-role ARN)"]
+                Pod_EBS["EBS CSI Controller Pod"]
+            end
+
+            subgraph EFS_CSI ["AWS EFS CSI Controller"]
+                SA_EFS["ServiceAccount: efs-csi-controller-sa\n(annotation: efs-csi-role ARN)"]
+                Pod_EFS["EFS CSI Controller Pod"]
+            end
+        end
+
+        subgraph Worker_Nodes ["EKS Worker Nodes (m5.xlarge)"]
+            subgraph Node1 ["Worker Node 1 (AZ-a)"]
+                JiraPod1["Jira Pod 1"]
+            end
+            subgraph Node2 ["Worker Node 2 (AZ-b)"]
+                JiraPod2["Jira Pod 2"]
+            end
+        end
+    end
+
+    %% OIDC IRSA Handshake
+    SA_EBS -.->|1. Assumes role via OIDC| EBS_Role
+    SA_EFS -.->|1. Assumes role via OIDC| EFS_Role
+
+    %% Control Plane AWS API Calls (Requiring IAM)
+    Pod_EBS ==>|2. Calls EC2 API to Create & Attach volume| EBS_Vol
+    Pod_EFS ==>|2. Calls EFS API to Create Access Point| EFS_FS
+
+    %% Mount / Data Plane (Physical Attachment)
+    EBS_Vol -->|Attached to Node 1 only (RWO)| JiraPod1
+    EFS_FS -.->|NFS Port 2049 Mount (RWX)| JiraPod1
+    EFS_FS -.->|NFS Port 2049 Mount (RWX)| JiraPod2
+```
+
+### Security Comparison: Node Role (Anti-Pattern) vs. IRSA (Best Practice)
+
+```mermaid
+flowchart TD
+    subgraph WRONG ["❌ The Anti-Pattern (Policies attached to Node Role)"]
+        NodeBad["EC2 Worker Node Host\n(IAM Role has S3, EBS, EFS, Admin policies)"]
+        AttackerPod["Compromised / Rogue Pod"]
+        AppPodA["App Pod"]
+        
+        NodeBad --> AttackerPod
+        NodeBad --> AppPodA
+        AttackerPod -->|Steals credentials from EC2 Metadata\n169.254.169.254| AWS_Account["🚨 Full AWS Account Access!\nCan delete DBs, snapshots, disks"]
+    end
+
+    subgraph RIGHT ["✅ The Production Pattern: IRSA (Our Setup)"]
+        NodeGood["EC2 Worker Node Host\n(Minimal Node Role: only Join Cluster & pull images)"]
+        CSI_Pod["EBS / EFS CSI Pod\n(bound to specific ServiceAccount)"]
+        Jira_App_Pod["Jira Application Pod"]
+
+        NodeGood --> CSI_Pod
+        NodeGood --> Jira_App_Pod
+
+        CSI_Pod -->|OIDC Token only| Scoped_Role["Scoped IAM Role\nOnly EBS / EFS permissions"]
+        Jira_App_Pod -.->|Cannot access AWS APIs| Blocked["🛑 Blocked! No AWS credentials"]
+    end
+```
+
+### Step-by-Step Volume Lifecycle: From PVC to Mounted Disk
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Jira as Jira DC Pod
+    participant K8s as Kubernetes API Server
+    participant EBS_CSI as EBS CSI Controller (IRSA)
+    participant EFS_CSI as EFS CSI Controller (IRSA)
+    participant AWS as AWS Cloud (EC2 / EFS APIs)
+
+    Note over Jira,K8s: 1. Application Requests Storage
+    Jira->>K8s: Submits PVC for Local Home (50Gi EBS) & Shared Home (100Gi EFS)
+    
+    Note over K8s,AWS: 2. EBS Provisioning (Local Home - RWO)
+    K8s->>EBS_CSI: Dynamic PVC triggered
+    EBS_CSI->>AWS: Calls ec2:CreateVolume (using ebs-csi-role)
+    AWS-->>EBS_CSI: Created vol-0123456789 (gp3)
+    EBS_CSI->>AWS: Calls ec2:AttachVolume to Node 1
+    Note over Jira,AWS: Formatted as ext4/xfs & mounted to /var/atlassian/application-data/jira
+
+    Note over K8s,AWS: 3. EFS Provisioning (Shared Home - RWX)
+    K8s->>EFS_CSI: PVC references StorageClass efs-sc
+    EFS_CSI->>AWS: Calls elasticfilesystem:ClientMount (using efs-csi-role)
+    AWS-->>EFS_CSI: Access Point verified & permissions granted
+    Note over Jira,AWS: Mounted via NFS (port 2049) to /var/atlassian/application-data/jira/shared
+
+    Note over Jira: Jira starts up with both local index cache (EBS) and shared attachments (EFS)!
+```
+
+---
+
+## 8. Microservices Reference Pattern
 
 This exact same architecture applies to any modern microservices stack on EKS:
 
@@ -285,7 +404,7 @@ flowchart LR
 
 ---
 
-## 8. Ingress & AWS Load Balancer Controller: IRSA Handshake & ALB Provisioning
+## 9. Ingress & AWS Load Balancer Controller: IRSA Handshake & ALB Provisioning
 
 Just like the CSI drivers need IAM permissions to manage storage, the **AWS Load Balancer Controller** needs IAM permissions to manage networking (ALBs, target groups, listeners).
 
