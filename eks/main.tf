@@ -33,3 +33,21 @@ resource "aws_eks_node_group" "example" {
   }
 
 }
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_eks_access_entry" "cluster_creator" {
+  cluster_name  = aws_eks_cluster.jira_dc_cluster.name
+  principal_arn = data.aws_caller_identity.current.arn
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "cluster_creator" {
+  cluster_name  = aws_eks_cluster.jira_dc_cluster.name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = data.aws_caller_identity.current.arn
+
+  access_scope {
+    type = "cluster"
+  }
+}
