@@ -42,3 +42,13 @@ output "efs_file_system_dns_name" {
   description = "The EFS File System DNS name"
   value       = module.efs.efs_file_system_dns_name
 }
+
+output "oidc_provider_url" {
+  description = "The URL of the OIDC Provider without https:// prefix"
+  value       = module.oidc.oidc_provider_url
+}
+
+output "oidc_provider_arn" {
+  description = "The ARN of the OIDC Provider"
+  value       = module.oidc.oidc_provider_arn
+}

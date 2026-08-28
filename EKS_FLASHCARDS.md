@@ -120,3 +120,21 @@
 | **FRONT (Question)** | Which specific components in the Jira Data Center on EKS architecture require IRSA via OIDC, and why? |
 | **BACK (Answer)** | • **1. AWS EBS CSI Driver (`ebs-csi-controller-sa`):**<br>  - **Policy:** `AmazonEBSCSIDriverPolicy`<br>  - **Purpose:** Dynamically provisions and attaches EBS `gp3` volumes for `jira-local-home` (RWO).<br><br>• **2. AWS EFS CSI Driver (`efs-csi-controller-sa`):**<br>  - **Policy:** `AmazonEFSCSIDriverPolicy`<br>  - **Purpose:** Automatically mounts the shared EFS filesystem for `jira-shared-home` (RWX).<br><br>• **3. AWS Load Balancer Controller (`aws-load-balancer-controller`):**<br>  - **Policy:** `AWSLoadBalancerControllerIAMPolicy`<br>  - **Purpose:** Discovers Ingress resources and automatically provisions the AWS Application Load Balancer (ALB) with cookie-based sticky sessions.<br><br>• **4. Jira Core Application Pods:**<br>  - **Permissions:** **ZERO direct AWS IAM permissions** needed! They only talk to PostgreSQL (RDS) and mounted filesystem paths, following strict Principle of Least Privilege. |
 
+---
+
+## 🎴 Flashcard 14: Ingress Health Check Path vs. Kubernetes Readiness Probe
+
+| Side | Details |
+| :--- | :--- |
+| **FRONT (Question)** | How should the AWS ALB Ingress `healthcheck-path` annotation be configured for an application on EKS, and why must it match the Kubernetes `readinessProbe`? |
+| **BACK (Answer)** | • **The Golden Rule:** Always configure `alb.ingress.kubernetes.io/healthcheck-path` to match the exact dedicated status endpoint defined in the Pod's **`readinessProbe`** (e.g. `/status` for Jira/Atlassian, `/actuator/health` for Spring Boot, `/-/ready` for Prometheus, `/healthz` for microservices).<br><br>• **Why Root (`/`) is an Anti-Pattern:**<br>  - **Redirect Failures:** Root paths frequently return `302 Found` (redirecting to `/login.jsp` or `/setup`), which triggers a health check failure if the ALB expects `200 OK`.<br>  - **Server Overhead:** Root loads full HTML/CSS/JS, creates sessions, and runs database queries. Pinging `/` every 5–10s across multiple AZs wastes container CPU and memory.<br>  - **Startup Lag:** During container boot, `/` can serve broken UI or 404 while plugins initialize.<br><br>• **Why Synchronization is Critical:** Ensures the AWS ALB only routes public internet traffic to a pod when both Kubernetes and internal application plugins have declared the pod 100% initialized and ready. |
+
+---
+
+## 🎴 Flashcard 15: AWS ALB "Fail-Open" Resilience Mechanism (All Targets Unhealthy)
+
+| Side | Details |
+| :--- | :--- |
+| **FRONT (Question)** | What happens when 100% of targets in an AWS ALB Target Group fail health checks? Why does the Web UI still load? |
+| **BACK (Answer)** | • **The "Fail-Open" Mechanism:** When **all** registered targets in a Target Group fail health checks (e.g. 1 out of 1 or 2 out of 2 unhealthy), the AWS Application Load Balancer enters a built-in safety fallback mode and **continues routing incoming traffic to all unhealthy targets** rather than returning an immediate `503 Service Temporarily Unavailable`.<br><br>• **Design Rationale:** AWS assumes that if 100% of targets fail, the health check configuration itself (path, timeout, success codes) is likely misconfigured while the backend application is actually operational.<br><br>• **Partial Failure Contrast:** If 1 target is healthy and 1 is unhealthy, ALB immediately blacklists the unhealthy target and sends 100% of traffic to the healthy one.<br><br>• **Control Plane vs Data Plane:** Breaking the Kubernetes AWS Load Balancer Controller (Control Plane) freezes AWS API sync (ingress updates/deletions), but the physical AWS ALB and Target Groups (Data Plane) continue forwarding network packets uninterrupted. |
+

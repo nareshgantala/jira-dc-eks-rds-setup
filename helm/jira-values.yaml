@@ -1,6 +1,6 @@
-# jira-values.yaml
+﻿# jira-values.yaml
 # Official Atlassian Jira Data Center Helm Chart Values
-# Note: Initial setup should start with replicaCount: 1 until the first-time setup wizard completes in the browser.
+# Initial setup starts with replicaCount: 1 until setup wizard completes.
 
 replicaCount: 1
 
@@ -21,7 +21,7 @@ jira:
       minHeap: "2g"
       maxHeap: "4g"
 
-# REQUIRED - Database configuration pointing to Aurora Serverless v2 PostgreSQL
+# Database configuration pointing to Aurora PostgreSQL
 database:
   type: postgres72
   url: "jdbc:postgresql://jira-dc-rds-cluster.cluster-c4jq64qge0zg.us-east-1.rds.amazonaws.com:5432/jiradb"
@@ -31,7 +31,7 @@ database:
     usernameSecretKey: username
     passwordSecretKey: password
 
-# REQUIRED - Volume Configuration
+# Storage Configuration
 volumes:
   localHome:
     persistentVolumeClaim:
@@ -54,11 +54,12 @@ ingress:
   create: true
   className: "alb"
   https: false
-  host: "k8s-jira-jira-2521efea0a-496804775.us-east-1.elb.amazonaws.com"
+  host: "k8s-jira-jira-2521efea0a-303188042.us-east-1.elb.amazonaws.com"
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # Health Check configuration (/status returns 200, / returns 302)
     alb.ingress.kubernetes.io/healthcheck-path: /status
     alb.ingress.kubernetes.io/success-codes: "200,302"
     # Sticky Sessions (Mandatory for Jira Data Center clustering)

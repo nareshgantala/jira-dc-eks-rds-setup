@@ -337,5 +337,43 @@ resource "aws_iam_openid_connect_provider" "eks" {
     </div>
   </div>
 
+  <!-- Card 14 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 14</span>
+      <span>How should ALB Ingress healthcheck-path be configured, and why match readinessProbe?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>The Golden Rule:</strong> Always configure <code>alb.ingress.kubernetes.io/healthcheck-path</code> to point to the exact dedicated status endpoint defined in the Pod's <strong><code>readinessProbe</code></strong> (e.g. <code>/status</code> for Jira, <code>/actuator/health</code> for Spring Boot, <code>/-/ready</code> for Prometheus, <code>/healthz</code> for microservices).</li>
+        <li><strong>Why Root (<code>/</code>) is an Anti-Pattern:</strong>
+          <ul>
+            <li><strong>Redirect Failures:</strong> Root paths frequently return <code>302 Found</code> (redirect to login/setup), failing default ALB 200 HTTP code matchers.</li>
+            <li><strong>Server Overhead:</strong> Root loads full HTML/CSS/JS, creates sessions, and queries databases, causing high CPU/memory usage when pinged every 5–10s across multiple AZs.</li>
+            <li><strong>Startup Lag:</strong> During boot, <code>/</code> can serve broken UI or 404 while plugins load.</li>
+          </ul>
+        </li>
+        <li><strong>Why Synchronization is Critical:</strong> Guarantees that AWS ALB will not route public internet traffic to a pod until both Kubernetes and internal application plugins have declared the pod 100% ready.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Card 15 -->
+  <div class="card">
+    <div class="card-front">
+      <span class="badge">Card 15</span>
+      <span>What happens when 100% of targets in an AWS ALB Target Group fail health checks?</span>
+    </div>
+    <div class="card-back">
+      <ul>
+        <li><strong>The "Fail-Open" Mechanism:</strong> When <strong>all</strong> registered targets in a Target Group fail health checks (e.g. 1/1 or 2/2 unhealthy), the AWS Application Load Balancer enters a safety fallback mode and <strong>continues forwarding requests to all unhealthy targets</strong> rather than dropping traffic with an immediate <code>503 Service Unavailable</code>.</li>
+        <li><strong>Design Rationale:</strong> AWS assumes that if 100% of targets fail, the health check configuration itself (path, timeout, matcher) is likely misconfigured while the backend application is actually operational.</li>
+        <li><strong>Partial Failure Contrast:</strong> If 1 target is healthy and 1 is unhealthy, ALB immediately blacklists the unhealthy target and sends 100% of traffic to the healthy one.</li>
+        <li><strong>Control Plane vs Data Plane:</strong> Breaking the Kubernetes AWS Load Balancer Controller (Control Plane) freezes AWS API sync (ingress updates/deletions), but the physical AWS ALB and Target Groups (Data Plane) continue forwarding network packets uninterrupted.</li>
+      </ul>
+    </div>
+  </div>
+
 </body>
 </html>
+
